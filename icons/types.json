@@ -1,0 +1,258 @@
+{
+ "version": 1,
+ "types": [
+  {
+   "label": "JPG",
+   "group": "Image",
+   "color": "#002FA7",
+   "ico": "bn-jpg.ico",
+   "exts": [
+    "jpg",
+    "jpeg",
+    "jpe",
+    "jfif",
+    "pjpeg"
+   ]
+  },
+  {
+   "label": "PNG",
+   "group": "Image",
+   "color": "#002FA7",
+   "ico": "bn-png.ico",
+   "exts": [
+    "png",
+    "apng"
+   ]
+  },
+  {
+   "label": "GIF",
+   "group": "Image",
+   "color": "#002FA7",
+   "ico": "bn-gif.ico",
+   "exts": [
+    "gif"
+   ]
+  },
+  {
+   "label": "WEBP",
+   "group": "Image",
+   "color": "#002FA7",
+   "ico": "bn-webp.ico",
+   "exts": [
+    "webp"
+   ]
+  },
+  {
+   "label": "AVIF",
+   "group": "Image",
+   "color": "#002FA7",
+   "ico": "bn-avif.ico",
+   "exts": [
+    "avif"
+   ]
+  },
+  {
+   "label": "BMP",
+   "group": "Image",
+   "color": "#002FA7",
+   "ico": "bn-bmp.ico",
+   "exts": [
+    "bmp",
+    "dib"
+   ]
+  },
+  {
+   "label": "ICO",
+   "group": "Image",
+   "color": "#002FA7",
+   "ico": "bn-ico.ico",
+   "exts": [
+    "ico",
+    "cur"
+   ]
+  },
+  {
+   "label": "SVG",
+   "group": "Image",
+   "color": "#002FA7",
+   "ico": "bn-svg.ico",
+   "exts": [
+    "svg"
+   ]
+  },
+  {
+   "label": "TIFF",
+   "group": "Image",
+   "color": "#002FA7",
+   "ico": "bn-tiff.ico",
+   "exts": [
+    "tif",
+    "tiff"
+   ]
+  },
+  {
+   "label": "HEIC",
+   "group": "Image",
+   "color": "#002FA7",
+   "ico": "bn-heic.ico",
+   "exts": [
+    "heic",
+    "heif",
+    "hif"
+   ]
+  },
+  {
+   "label": "JXL",
+   "group": "Image",
+   "color": "#002FA7",
+   "ico": "bn-jxl.ico",
+   "exts": [
+    "jxl"
+   ]
+  },
+  {
+   "label": "MP4",
+   "group": "Video",
+   "color": "#6C3BB5",
+   "ico": "bn-mp4.ico",
+   "exts": [
+    "mp4",
+    "m4v"
+   ]
+  },
+  {
+   "label": "MOV",
+   "group": "Video",
+   "color": "#6C3BB5",
+   "ico": "bn-mov.ico",
+   "exts": [
+    "mov"
+   ]
+  },
+  {
+   "label": "WEBM",
+   "group": "Video",
+   "color": "#6C3BB5",
+   "ico": "bn-webm.ico",
+   "exts": [
+    "webm"
+   ]
+  },
+  {
+   "label": "OGV",
+   "group": "Video",
+   "color": "#6C3BB5",
+   "ico": "bn-ogv.ico",
+   "exts": [
+    "ogv",
+    "ogg"
+   ]
+  },
+  {
+   "label": "TS",
+   "group": "Video",
+   "color": "#6C3BB5",
+   "ico": "bn-ts.ico",
+   "exts": [
+    "ts",
+    "m2ts",
+    "mts"
+   ]
+  },
+  {
+   "label": "MKV",
+   "group": "Video",
+   "color": "#6C3BB5",
+   "ico": "bn-mkv.ico",
+   "exts": [
+    "mkv"
+   ]
+  },
+  {
+   "label": "AVI",
+   "group": "Video",
+   "color": "#6C3BB5",
+   "ico": "bn-avi.ico",
+   "exts": [
+    "avi"
+   ]
+  },
+  {
+   "label": "WMV",
+   "group": "Video",
+   "color": "#6C3BB5",
+   "ico": "bn-wmv.ico",
+   "exts": [
+    "wmv"
+   ]
+  },
+  {
+   "label": "FLV",
+   "group": "Video",
+   "color": "#6C3BB5",
+   "ico": "bn-flv.ico",
+   "exts": [
+    "flv",
+    "f4v"
+   ]
+  },
+  {
+   "label": "MPG",
+   "group": "Video",
+   "color": "#6C3BB5",
+   "ico": "bn-mpg.ico",
+   "exts": [
+    "mpg",
+    "mpeg"
+   ]
+  },
+  {
+   "label": "VOB",
+   "group": "Video",
+   "color": "#6C3BB5",
+   "ico": "bn-vob.ico",
+   "exts": [
+    "vob"
+   ]
+  },
+  {
+   "label": "3GP",
+   "group": "Video",
+   "color": "#6C3BB5",
+   "ico": "bn-3gp.ico",
+   "exts": [
+    "3gp",
+    "3g2"
+   ]
+  },
+  {
+   "label": "RMVB",
+   "group": "Video",
+   "color": "#6C3BB5",
+   "ico": "bn-rmvb.ico",
+   "exts": [
+    "rmvb"
+   ]
+  },
+  {
+   "label": "PDF",
+   "group": "Pdf",
+   "color": "#C62828",
+   "ico": "bn-pdf.ico",
+   "exts": [
+    "pdf"
+   ]
+  },
+  {
+   "label": "HTML",
+   "group": "Html",
+   "color": "#E8710A",
+   "ico": "bn-html.ico",
+   "exts": [
+    "html",
+    "htm",
+    "xhtml"
+   ]
+  }
+ ]
+}

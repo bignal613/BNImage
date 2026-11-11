@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <title>BNImage</title>
+  <defs>
+    <linearGradient id="p" x1="0" y1="0" x2="0.8" y2="1"><stop offset="0" stop-color="#FFFFFF"/><stop offset="1" stop-color="#F1F5FA"/></linearGradient>
+    <linearGradient id="c" x1="0.1" y1="0" x2="0.72" y2="1"><stop offset="0" stop-color="#3D9BF5"/><stop offset="1" stop-color="#0D6AD2"/></linearGradient>
+    <mask id="cardMask">
+      <rect x="212" y="284" width="600" height="456" rx="48" fill="#fff"/>
+      <path d="M268 676 L506 452 L744 676 Z" fill="#000"/>
+      
+    </mask>
+  </defs>
+  <rect width="1024" height="1024" rx="232" fill="url(#p)" stroke="#D9E0E9" stroke-width="8"/>
+  <rect x="212" y="284" width="600" height="456" rx="48" fill="url(#c)" mask="url(#cardMask)"/>
+</svg>
