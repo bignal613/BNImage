@@ -1,10 +1,11 @@
 # -*- coding: utf-8 -*-
 """录制 README 演示 GIF 的原始素材：打开图片 -> 影调调整 -> 播放视频。"""
-import os, shutil, urllib.parse, glob
+import os, shutil, tempfile, urllib.parse, glob
 from playwright.sync_api import sync_playwright
 
-D = r"D:\BNImage\_demo"
-OUT = r"C:\Users\AHKK\AppData\Local\Temp\bn_rec"
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+D = os.path.join(ROOT, "_demo")
+OUT = os.path.join(tempfile.gettempdir(), "bn_rec")
 shutil.rmtree(OUT, ignore_errors=True)
 os.makedirs(OUT, exist_ok=True)
 URL = "http://127.0.0.1:8787/?path=" + urllib.parse.quote(D)
