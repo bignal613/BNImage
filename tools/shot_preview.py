@@ -13,7 +13,7 @@ URL = "http://127.0.0.1:8787/?path=" + urllib.parse.quote(D)
 with sync_playwright() as pw:
     b = pw.chromium.launch(args=["--no-proxy-server"])
     for theme in ("light", "dark"):
-        pg = b.new_page(viewport={"width": 1440, "height": 900}, device_scale_factor=2)
+        pg = b.new_page(viewport={"width": 1440, "height": 900}, device_scale_factor=1.5)
         pg.add_init_script(f"localStorage.setItem('bnimage.theme','{theme}')")
         pg.goto(URL, wait_until="domcontentloaded")
         pg.wait_for_timeout(2600)

@@ -67,8 +67,8 @@ if os.path.exists(wp):
     im.save(os.path.join(D, "效果图", "参考图.jpg"), quality=92)
 
 # 视频：用 ffmpeg 生成一段中性渐变动画，避免把真实项目素材带进来
-FF = r"D:\BNImage\ffmpeg.exe"
-if os.path.exists(FF):
+FF = shutil.which("ffmpeg") or "ffmpeg"
+try:
     import subprocess
 
     for target in (os.path.join(D, "现场巡查.mp4"),
@@ -81,6 +81,8 @@ if os.path.exists(FF):
              "-c:v", "libx264", "-preset", "veryfast", "-crf", "24",
              "-pix_fmt", "yuv420p", "-movflags", "+faststart", target],
             check=False)
+except (OSError, FileNotFoundError):
+    print("没找到 ffmpeg，跳过视频生成")
 
 # PDF
 try:
