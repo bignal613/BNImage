@@ -5,6 +5,8 @@
 
 界面克制、留白充足，没有多余的按钮和设置。
 
+**[⬇ 直接下载使用](https://github.com/bignal613/BNImage/releases/latest)** — 解压双击即用，不需要装 Python。下文的「从源码运行」只给想改代码的人。
+
 ![界面预览](docs/preview.png)
 
 ## 它解决什么问题
