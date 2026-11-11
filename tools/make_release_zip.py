@@ -5,9 +5,9 @@ import sys
 import time
 import zipfile
 
-SRC = r"D:\BNImage\_release\BNImage_1.4_win64"
-OUT = r"D:\BNImage\_release\BNImage_1.4_win64.zip"
-TOP = "BNImage_1.4_win64"
+SRC = r"D:\BNImage\_release\BNImage_1.6_win64"
+OUT = r"D:\BNImage\_release\BNImage_1.6_win64.zip"
+TOP = "BNImage_1.6_win64"
 
 t0 = time.time()
 n = 0
