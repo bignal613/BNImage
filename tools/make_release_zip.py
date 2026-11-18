@@ -1,13 +1,18 @@
 # -*- coding: utf-8 -*-
-"""把 _release 里的分发目录打成 zip。顶层保留文件夹名，解压即得到一个目录。"""
+"""把 _release 里的分发目录打成 zip。顶层保留文件夹名，解压即得到一个目录。
+
+用法：python tools/make_release_zip.py 1.7
+不传版本号时沿用下面的默认值。
+"""
 import os
 import sys
 import time
 import zipfile
 
-SRC = r"D:\BNImage\_release\BNImage_1.6_win64"
-OUT = r"D:\BNImage\_release\BNImage_1.6_win64.zip"
-TOP = "BNImage_1.6_win64"
+VER = sys.argv[1] if len(sys.argv) > 1 else "1.7"
+TOP = f"BNImage_{VER}_win64"
+SRC = os.path.join(r"D:\BNImage\_release", TOP)
+OUT = os.path.join(r"D:\BNImage\_release", TOP + ".zip")
 
 t0 = time.time()
 n = 0

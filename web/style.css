@@ -1057,3 +1057,31 @@ kbd {
 /* 翻页按钮常驻在深色半透明圆底上，固定用亮一档的蓝 */
 .nav-zone svg { color: #8fa5ff; }
 .nav-zone:hover svg { color: #c3ceff; }
+
+/* --------------------------------------------- 页面缩放时「界面层」不跟随
+   Ctrl+滚轮 / Ctrl+加减 / 触摸板捏合 放大的是整个文档，顶栏和浮层会
+   跟着一起变大变高。JS 按 devicePixelRatio 反推页面缩放比 p，写进
+   --pz / --pzi；这里只把界面层反向缩回去：
+     · zoom: var(--pzi)      —— 尺寸回到与 100% 时相同的物理像素
+     · width: calc(100% * p) —— 铺满宽度，反缩放后恰好还是满宽
+   定位值不用另外补：zoom 会把 left/top/right/bottom 一起反缩，
+   贴边的位置于是停在原处。内容（图片、视频、PDF、网页）不在此列，
+   照旧按缩放比例变化。 */
+:root { --pz: 1; --pzi: 1; }
+
+#bar {
+  zoom: var(--pzi);
+  width: calc(100% * var(--pz));
+}
+/* 顶栏高度在物理像素上恒定，舞台起点跟着顶栏走（舞台本身不反缩） */
+#stage { top: calc(var(--bar-h) * var(--pzi)); }
+
+.viewer-stage .frame-wrap .frame-note {
+  zoom: var(--pzi);
+  width: calc(100% * var(--pz));
+}
+.viewer-close,
+.viewer-edit,
+.nav-zone,
+.viewer-info,
+.zoom-bar { zoom: var(--pzi); }

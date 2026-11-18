@@ -70,7 +70,7 @@ except Exception:
     pass
 
 APP_NAME = "BNImage"
-APP_VERSION = "1.6"
+APP_VERSION = "1.7"
 MAX_UPLOAD = 200 * 1024 * 1024      # 编辑结果回写的上限
 FROZEN = bool(getattr(sys, "frozen", False))
 if FROZEN:
@@ -753,6 +753,39 @@ def _tx_worker(path: str, key: str, dur: float):
 
 # ---------------------------------------------------------------- 路径工具
 
+def ui_scale():
+    """系统显示缩放（DPI / 96）。页面缩放（Ctrl+滚轮）会改变
+    devicePixelRatio，前端拿它除以这个基准值，才能算出「页面被放大/缩小了
+    多少」，从而只把界面层反缩回去、内容照常缩放。
+    返回 1.0 表示拿不到（前端会退回按首帧 DPR 当基准）。"""
+    if os.name != "nt":
+        return 1.0
+    try:
+        user32 = ctypes.windll.user32
+        dpi = 0
+        # 优先问当前窗口：双屏不同缩放时，系统 DPI 只是主屏的
+        try:
+            hwnd = user32.GetForegroundWindow()
+            pid = ctypes.c_ulong()
+            user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+            if hwnd and pid.value == os.getpid():
+                dpi = user32.GetDpiForWindow(hwnd)
+        except Exception:
+            dpi = 0
+        if not dpi:
+            try:
+                dpi = user32.GetDpiForSystem()          # Win10 1607+
+            except AttributeError:
+                hdc = user32.GetDC(0)
+                dpi = ctypes.windll.gdi32.GetDeviceCaps(hdc, 88)  # LOGPIXELSX
+                user32.ReleaseDC(0, hdc)
+        if dpi and 72 <= dpi <= 480:
+            return round(dpi / 96.0, 4)
+    except Exception:
+        pass
+    return 1.0
+
+
 def drives():
     out = []
     if os.name == "nt":
@@ -1253,6 +1286,10 @@ class Handler(BaseHTTPRequestHandler):
 
             if route == "/api/hello":
                 return self._json({"app": "bnimage", "version": APP_VERSION})
+
+            if route == "/api/ui":
+                # 界面层反缩放要的基准：系统显示缩放
+                return self._json({"scale": ui_scale()})
 
             if route == "/api/theme":
                 # 页面切浅色/深色时顺手把系统标题栏一起换掉
@@ -2154,6 +2191,160 @@ def _window_icon(hwnd):
         return
 
 
+# ---------------------------------------------------------------- 窗口落位
+# pywebview 的 width/height/x/y 一律是「逻辑像素」，内部还会再乘一次窗口
+# 所在显示器的 DPI 缩放（winforms.py: Size = initial_width * scale）。
+# 于是 1520x960 在 150% 缩放的屏幕上变成 2280x1440 物理像素，比屏幕本身
+# 还大；而 StartPosition.CenterScreen 只按"屏幕"居中、不理会工作区，
+# 窗口就此顶出屏幕右边和下边。这里自己算：先取鼠标所在显示器的工作区
+# （已扣掉任务栏），换算成逻辑像素，再按可用空间收拢尺寸并居中。
+
+class _RECT(ctypes.Structure):
+    _fields_ = [("left", ctypes.c_long), ("top", ctypes.c_long),
+                ("right", ctypes.c_long), ("bottom", ctypes.c_long)]
+
+
+class _POINT(ctypes.Structure):
+    _fields_ = [("x", ctypes.c_long), ("y", ctypes.c_long)]
+
+
+class _MONITORINFO(ctypes.Structure):
+    _fields_ = [("cbSize", ctypes.c_ulong), ("rcMonitor", _RECT),
+                ("rcWork", _RECT), ("dwFlags", ctypes.c_ulong)]
+
+
+_DPI_READY = [False]
+
+
+def _ensure_dpi_aware():
+    """在量工作区之前先让进程变成「系统 DPI 感知」——和 pywebview 自己
+    在 webview.start() 里做的是同一件事（winforms.py: SetProcessDPIAware）。
+    故意不用 per-monitor：pywebview 的窗口尺寸只按窗口所在显示器的
+    DPI 乘一次，两边口径必须一致，否则混合缩放的机器上会互相打架。"""
+    if os.name != "nt" or _DPI_READY[0]:
+        return
+    _DPI_READY[0] = True
+    try:
+        ctypes.windll.user32.SetProcessDPIAware()
+    except Exception:
+        pass
+
+
+def _monitor_of_point(user32, x, y):
+    """取包含该点的显示器（点落在缝隙里时退到最近的一块）。"""
+    try:
+        hmon = user32.MonitorFromPoint(_POINT(int(x), int(y)), 2)  # NEAREST
+    except Exception:
+        hmon = 0
+    return hmon or None
+
+
+def _monitor_of_rect(user32, left, top, right, bottom):
+    try:
+        rect = _RECT(int(left), int(top), int(right), int(bottom))
+        return user32.MonitorFromRect(ctypes.byref(rect), 2) or None
+    except Exception:
+        return None
+
+
+def _work_area(hmon):
+    """返回 (left, top, right, bottom)，单位与 pywebview 的逻辑像素一致。"""
+    user32 = ctypes.windll.user32
+    mi = _MONITORINFO()
+    mi.cbSize = ctypes.sizeof(mi)
+    if not hmon or not user32.GetMonitorInfoW(ctypes.c_void_p(hmon), ctypes.byref(mi)):
+        r = _RECT()
+        # 兜底：整个主屏减去任务栏
+        user32.SystemParametersInfoW(0x0030, 0, ctypes.byref(r), 0)   # SPI_GETWORKAREA
+        if not r.right or not r.bottom:
+            r = _RECT(0, 0, user32.GetSystemMetrics(0), user32.GetSystemMetrics(1))
+        return r.left, r.top, r.right, r.bottom
+
+    w = mi.rcWork
+    return w.left, w.top, w.right, w.bottom
+
+
+def _system_scale():
+    """系统 DPI ÷ 96（1.0 = 100%，1.5 = 150%）。pywebview 内部就是拿这个
+    系数把逻辑像素乘成设备像素的，这里原样对齐。"""
+    try:
+        dpi = ctypes.windll.user32.GetDpiForSystem()
+        if 72 <= dpi <= 480:
+            return dpi / 96.0
+    except Exception:
+        pass
+    return 1.0
+
+
+def window_geometry(desired_w, desired_h, min_w=880, min_h=560,
+                    anchor="cursor"):
+    """算出初始窗口该放在哪、多大，返回 pywebview 口径的逻辑像素 (x, y, w, h)。
+
+    · 目标显示器：默认跟着鼠标走（用户刚在那儿点的图标），鼠标取不到才用主屏
+    · 尺寸：放得下就按原尺寸，放不下按工作区的 94% 收拢，下限是 min_size
+    · 位置：在工作区里居中（不是在整个屏幕里，任务栏不会被盖住看不见）
+    """
+    _ensure_dpi_aware()
+    scale = _system_scale()
+    try:
+        user32 = ctypes.windll.user32
+        x = y = 0
+        if anchor == "cursor":
+            try:
+                pt = _POINT()
+                if user32.GetCursorPos(ctypes.byref(pt)):
+                    x, y = pt.x, pt.y
+            except Exception:
+                pass
+        hmon = _monitor_of_point(user32, x, y) or _monitor_of_rect(user32, 0, 0, 1, 1)
+        left, top, right, bottom = _work_area(hmon)
+    except Exception:
+        left, top, right, bottom = 0, 0, 1920, 1040
+
+    # 换算成逻辑像素：pywebview 会再乘一次 scale
+    wk_w = (right - left) / scale
+    wk_h = (bottom - top) / scale
+    lx = left / scale
+    ly = top / scale
+    if wk_w <= 1 or wk_h <= 1:
+        wk_w, wk_h, lx, ly = 1280.0, 720.0, 0.0, 0.0
+
+    w = min(float(desired_w), wk_w * 0.94)
+    h = min(float(desired_h), wk_h * 0.94)
+    w = max(w, min(float(min_w), wk_w))
+    h = max(h, min(float(min_h), wk_h))
+    w, h = int(w), int(h)
+
+    px = int(round(lx + (wk_w - w) / 2))
+    py = int(round(ly + (wk_h - h) / 2))
+    return px, py, w, h
+
+
+def _keep_on_screen(hwnd):
+    """保险丝：万一 DPI 换算还是把窗口算出了界，等它显示出来再拉回工作区。
+    只在真的越界时才动，正常情况一次 SetWindowPos 都不发（不会有跳动）。"""
+    if os.name != "nt" or not hwnd:
+        return
+    try:
+        user32 = ctypes.windll.user32
+        r = _RECT()
+        if not user32.GetWindowRect(ctypes.c_void_p(int(hwnd)), ctypes.byref(r)):
+            return
+        hmon = _monitor_of_rect(user32, r.left, r.top, r.right, r.bottom)
+        left, top, right, bottom = _work_area(hmon)
+        if r.left >= left and r.top >= top and r.right <= right and r.bottom <= bottom:
+            return
+        w = min(r.right - r.left, right - left)
+        h = min(r.bottom - r.top, bottom - top)
+        nx = max(left, min(r.left, right - w))
+        ny = max(top, min(r.top, bottom - h))
+        user32.SetWindowPos(ctypes.c_void_p(int(hwnd)), None, int(nx), int(ny),
+                            int(w), int(h), 0x0004 | 0x0010)   # NOZORDER | NOACTIVATE
+        _note(f"窗口越界，已拉回工作区：{r.left},{r.top} → {nx},{ny}")
+    except Exception:
+        pass
+
+
 def open_native_window(url):
     """在本进程里开一个真窗口，阻塞到窗口被关闭。
     返回 False 表示这个环境起不来（调用方退回 Edge 应用窗口）。"""
@@ -2162,9 +2353,16 @@ def open_native_window(url):
         return False
 
     theme = read_ui_theme() or "dark"
+    # 自己算位置和尺寸：按鼠标所在显示器的工作区居中，越界的尺寸先收拢。
+    # 不传坐标时 pywebview 会用 CenterScreen，只认"屏幕"不认任务栏，
+    # 屏幕高 1080 而窗口 960 + 标题栏时就会被顶到屏幕外面去。
+    wx, wy, ww, wh = window_geometry(1520, 960, min_w=880, min_h=560)
+    _dbg(f"window geometry: {ww}x{wh} @({wx},{wy})")
     win = webview.create_window(
         f"{APP_NAME} · 统一查看器", url,
-        width=1520, height=960, min_size=(880, 560),
+        width=ww, height=wh, x=wx, y=wy,
+        # 小屏上算出来的尺寸可能比 min_size 还小，别让 MinimumSize 再把它顶出去
+        min_size=(min(880, ww), min(560, wh)),
         # 底色跟着上次的主题走，深色下开窗不会先白一下
         background_color=("#0C0C0D" if theme == "dark" else "#F6F6F4"),
     )
@@ -2188,6 +2386,7 @@ def open_native_window(url):
             if h:
                 WIN_HWND = h
                 _account_hwnd(h)
+                _keep_on_screen(h)
                 _window_icon(h)
                 # 页面还没加载完，先用上次的主题把标题栏染上，避免白杠一闪
                 set_caption_theme(read_ui_theme() or "dark")

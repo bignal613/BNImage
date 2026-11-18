@@ -38,6 +38,42 @@ const state = {
   loading: false,
 };
 
+/* -------------------------------------------------- 页面缩放补偿（界面层）
+   Ctrl+滚轮 / Ctrl+加减 / 触摸板捏合 走的是浏览器「整页缩放」，
+   顶栏、面包屑、浮层会跟着一起放大缩小，既占地方又容易挤乱。
+   这里按 devicePixelRatio 反推当前缩放比，写进 --pz / --pzi，
+   样式表再把界面层反向缩回去——位置贴边、尺寸恒定，
+   只有内容（图片 / 视频 / PDF / 网页）跟着缩放。 */
+(function pageZoomGuard() {
+  const root = document.documentElement;
+  let base = window.devicePixelRatio || 1;
+  let applied = 1;
+  root.style.setProperty('--pz', '1');
+  root.style.setProperty('--pzi', '1');
+
+  function sync() {
+    const raw = (window.devicePixelRatio || 1) / base;
+    const p = Math.min(4, Math.max(0.5, Math.round(raw * 1000) / 1000));
+    if (Math.abs(p - applied) < 0.002) return;
+    applied = p;
+    root.style.setProperty('--pz', String(p));
+    root.style.setProperty('--pzi', String(1 / p));
+  }
+
+  /* 基准用系统显示缩放，而不是首帧 DPR：WebView2 会记住上次的页面缩放，
+     下次开窗时页面可能已经是 150%，那样首帧 DPR 就不能当 100% 用。 */
+  fetch('/api/ui', { cache: 'no-store' })
+    .then((r) => r.json())
+    .then((d) => {
+      if (d && d.scale > 0) { base = d.scale; sync(); }
+    })
+    .catch(() => {});
+
+  window.addEventListener('resize', sync, { passive: true });
+  /* devicePixelRatio 变化不一定带 resize，兜一个很轻的轮询 */
+  setInterval(sync, 400);
+})();
+
 /* ------------------------------------------------------------ 工具 */
 
 function fsUrl(p, rev) {
