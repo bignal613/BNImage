@@ -31,6 +31,7 @@ echo   [1/3] 打包中（约 30-60 秒）...
   --name BNImage --icon bnimage.ico ^
   --add-data "web;web" --add-data "bnimage.ico;." %FFARG% ^
   --collect-all webview ^
+  --collect-all docx --collect-all openpyxl --collect-all pptx --collect-submodules lxml ^
   --hidden-import webview.platforms.edgechromium ^
   --hidden-import webview.platforms.winforms ^
   --hidden-import clr --hidden-import clr_loader ^

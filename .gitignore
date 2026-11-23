@@ -38,3 +38,7 @@ _demo/
 Thumbs.db
 desktop.ini
 *.log
+
+# ---- 局部备份目录（改版时留下的旧前端副本）----
+web.bak*/
+*.bak

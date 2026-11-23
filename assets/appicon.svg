@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256">
+  <!-- BNImage 应用图标：圆角 56/256（约 22%），比常见的 Windows 圆角方略圆一点，但不做成圆饼 -->
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0.35" y2="1">
+      <stop offset="0" stop-color="#0B3BC4"/>
+      <stop offset="1" stop-color="#002A96"/>
+    </linearGradient>
+  </defs>
+  <rect width="256" height="256" rx="56" fill="url(#bg)"/>
+  <text x="128" y="176" text-anchor="middle" font-family="Segoe UI" font-weight="700"
+        font-size="122" letter-spacing="-4" fill="#fff" stroke="#fff" stroke-width="4"
+        stroke-linejoin="round" paint-order="stroke">BN</text>
+</svg>

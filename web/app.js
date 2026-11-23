@@ -1,8 +1,12 @@
-/* BNImage · 统一查看器 —— 前端逻辑
+﻿/* BNImage · 统一查看器 —— 前端逻辑
    只读浏览：网格 → 单张 / 视频 / PDF / HTML
    ------------------------------------------------------------------ */
 
 const $ = (s) => document.querySelector(s);
+
+/* 版本号只在这里写一次；关于面板里两处都引用它 */
+const APP_VER = '2.2';
+
 const el = {
   bar: $('#bar'),
   crumbs: $('#crumbs'),
@@ -74,6 +78,27 @@ const state = {
   setInterval(sync, 400);
 })();
 
+/* -------------------------------------------------- 缩略图大小 */
+
+const CELL_SIZES = [112, 152, 196, 248];
+const CELL_KEY = 'bnimage.cell';
+const CELL_DEFAULT = 152;
+
+function applyCellSize(px) {
+  const size = CELL_SIZES.includes(px) ? px : CELL_DEFAULT;
+  document.documentElement.style.setProperty('--cell', size + 'px');
+  try { localStorage.setItem(CELL_KEY, String(size)); } catch (e) { /* 隐私模式 */ }
+  document.querySelectorAll('#sizePop button').forEach((b) => {
+    b.classList.toggle('on', Number(b.dataset.size) === size);
+  });
+}
+
+function initCellSize() {
+  let saved = CELL_DEFAULT;
+  try { saved = Number(localStorage.getItem(CELL_KEY)) || CELL_DEFAULT; } catch (e) { /* 忽略 */ }
+  applyCellSize(saved);
+}
+
 /* ------------------------------------------------------------ 工具 */
 
 function fsUrl(p, rev) {
@@ -90,6 +115,12 @@ function thumbUrl(item, w = 380) {
 /* 视频封面：服务端用 ffmpeg 抓帧，浏览器只负责显示这张图 */
 function vframeUrl(item, w = 420) {
   return `/api/vframe?path=${encodeURIComponent(item.path)}&w=${w}${item.rev ? '&r=' + item.rev : ''}`;
+}
+
+/* SketchUp 模型：服务端从 .skp（本身就是 zip）里取出 SketchUp 存的预览图。
+   原图固定 256px，w 再大也只会变糊，所以两处都只请求 512。 */
+function suUrl(item, w = 512) {
+  return `/api/su?path=${encodeURIComponent(item.path)}&w=${w}${item.rev ? '&r=' + item.rev : ''}`;
 }
 
 function renderUrl(item, w = 2560, rev) {
@@ -128,12 +159,16 @@ function toast(msg, ms = 2200) {
 /* ------------------------------------------------------------ 图标 */
 
 const ICON = {
-  folder: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.1"><path d="M3 6.6c0-.6.5-1.1 1.1-1.1h4.3l1.7 2.1h9.8c.6 0 1.1.5 1.1 1.1v9.6c0 .6-.5 1.1-1.1 1.1H4.1c-.6 0-1.1-.5-1.1-1.1V6.6Z"/></svg>`,
-  pdf: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.1"><path d="M6 3.5h7.6L18.5 8.4V20a.5.5 0 0 1-.5.5H6a.5.5 0 0 1-.5-.5V4a.5.5 0 0 1 .5-.5Z"/><path d="M13.4 3.6v4.9h4.9"/><path d="M8.6 16.6v-4.2h1.3a1.3 1.3 0 0 1 0 2.6H8.6M13 16.6v-4.2h1.1c1.2 0 1.9.9 1.9 2.1s-.7 2.1-1.9 2.1H13Z" stroke-width=".9"/></svg>`,
-  html: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.1"><path d="M6 3.5h7.6L18.5 8.4V20a.5.5 0 0 1-.5.5H6a.5.5 0 0 1-.5-.5V4a.5.5 0 0 1 .5-.5Z"/><path d="M13.4 3.6v4.9h4.9"/><path d="m9.6 12.4-2 2 2 2M14.4 12.4l2 2-2 2" stroke-width=".9"/></svg>`,
-  image: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.1"><rect x="3.4" y="5.4" width="17.2" height="13.2" rx=".6"/><circle cx="8.6" cy="10.2" r="1.35"/><path d="m4.4 17.6 4.9-4.9 3.4 3.4 2.6-2.4 4.4 4.1"/></svg>`,
-  video: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.1"><rect x="3.2" y="5.4" width="17.6" height="13.2" rx=".6"/><path d="m10.2 9.3 5 2.7-5 2.7V9.3Z"/></svg>`,
-  drive: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.1"><rect x="3.2" y="6" width="17.6" height="12" rx="1.6"/><path d="M3.2 12.6h17.6"/><circle cx="6.6" cy="15.3" r=".85" fill="currentColor" stroke="none"/></svg>`,
+  folder: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3.3 7.6c0-1.27 1.03-2.3 2.3-2.3h3.4c.66 0 1.28.28 1.72.77l.92 1.03h6.76c1.27 0 2.3 1.03 2.3 2.3v7.2c0 1.27-1.03 2.3-2.3 2.3H5.6c-1.27 0-2.3-1.03-2.3-2.3V7.6Z"/></svg>`,
+  pdf: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M6.5 3.6h6.2c.3 0 .6.12.82.34l3.6 3.6c.22.22.34.52.34.82v11.1c0 .9-.72 1.6-1.62 1.6H6.5c-.9 0-1.62-.7-1.62-1.6V5.2c0-.9.72-1.6 1.62-1.6Z"/><path d="M12.9 3.9v3.4c0 .72.58 1.3 1.3 1.3h3.3"/><path d="M7.4 17.3v-4.6h1.35a1.3 1.3 0 0 1 0 2.6H7.4" stroke-width="1.3"/><path d="M9.7 17.3v-4.6h1.05c1.2 0 1.9.9 1.9 2.3s-.7 2.3-1.9 2.3H9.7" stroke-width="1.3"/><path d="M14.8 12.7h-1.9v4.6M14.4 14.9h-1.5" stroke-width="1.3"/></svg>`,
+  html: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M6.5 3.6h6.2c.3 0 .6.12.82.34l3.6 3.6c.22.22.34.52.34.82v11.1c0 .9-.72 1.6-1.62 1.6H6.5c-.9 0-1.62-.7-1.62-1.6V5.2c0-.9.72-1.6 1.62-1.6Z"/><path d="M12.9 3.9v3.4c0 .72.58 1.3 1.3 1.3h3.3"/><path d="m10 12.6-2 2.1 2 2.1M14 12.6l2 2.1-2 2.1"/></svg>`,
+  image: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3.3" y="5.2" width="17.4" height="13.6" rx="2.6"/><circle cx="8.6" cy="10" r="1.5"/><path d="M4.2 17.4 9.5 12l3.4 3.3 2.4-2.3 4.3 4.1"/></svg>`,
+  video: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3.3" y="5.2" width="17.4" height="13.6" rx="2.6"/><path d="m10.3 9.2 4.7 2.8-4.7 2.8V9.2Z"/></svg>`,
+  drive: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3.3" y="6" width="17.4" height="12" rx="2.6"/><path d="M3.3 12.8h17.4"/><circle cx="6.9" cy="15.4" r=".9" fill="currentColor" stroke="none"/></svg>`,
+  su: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3.3 19.9 7.6v8.8L12 20.7 4.1 16.4V7.6Z"/><path d="M4.1 7.6 12 12l7.9-4.4M12 12v8.7"/></svg>`,
+  docx: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M6.5 3.6h6.2c.3 0 .6.12.82.34l3.6 3.6c.22.22.34.52.34.82v11.1c0 .9-.72 1.6-1.62 1.6H6.5c-.9 0-1.62-.7-1.62-1.6V5.2c0-.9.72-1.6 1.62-1.6Z"/><path d="M12.9 3.9v3.4c0 .72.58 1.3 1.3 1.3h3.3"/><path d="M8 12.4h8M8 15h8M8 17.6h5"/></svg>`,
+  xlsx: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3.6" y="4.4" width="16.8" height="15.2" rx="2.6"/><path d="M3.6 9.4h16.8M3.6 14.4h16.8M9.4 9.4v10.2M14.6 9.4v10.2"/></svg>`,
+  pptx: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3.4" y="4.9" width="17.2" height="11.6" rx="2.6"/><path d="M12 16.5v3.2M8.6 20h6.8"/><path d="M8.6 12.9v-3M12 12.9V9.4M15.4 12.9V7.9" stroke-width="1.9"/></svg>`,
 };
 
 /* ------------------------------------------------------------ 主题 */
@@ -223,10 +258,11 @@ async function renderRoot() {
   el.grid.scrollTop = 0;
   el.count.textContent = '';
 
-  const add = (name, path, icon, sub) => {
+  const add = (name, path, icon) => {
     const c = document.createElement('div');
-    c.className = 'cell tile folder';
-    c.innerHTML = `<div class="glyph">${icon}<span class="name">${escapeHtml(name)}</span></div>`;
+    c.className = 'cell folder';
+    c.innerHTML = `<div class="thumb tile"><div class="glyph">${icon}</div></div>`;
+    appendCap(c, name);
     c.title = path;
     c.onclick = () => load(path);
     el.grid.appendChild(c);
@@ -340,43 +376,31 @@ function renderGrid(data, opts = {}) {
   syncCellHeight();
 }
 
+/* 格子统一结构：.thumb（方形图面）+ .cap（下方常显文件名）。
+   图片/视频/文档都走这一套，缩略图还没回来时 .pulse 给一层扫光骨架。 */
 function makeCell(item) {
   const cell = document.createElement('div');
+  cell.title = item.name;
 
   if (item.kind === 'dir') {
-    cell.className = 'cell tile folder';
-    cell.innerHTML = `<div class="glyph">${ICON.folder}<span class="name">${escapeHtml(item.name)}</span></div>`;
-    cell.title = item.name;
+    cell.className = 'cell folder';
+    cell.innerHTML = `<div class="thumb tile"><div class="glyph">${ICON.folder}</div></div>`;
+    appendCap(cell, item.name);
     cell.onclick = () => load(item.path);
     return cell;
   }
 
-  if (item.kind === 'image') {
-    cell.className = 'cell pulse';
-    const img = document.createElement('img');
-    img.alt = item.name;
-    img.loading = 'lazy';
-    img.decoding = 'async';
-    img.onload = () => { cell.classList.remove('pulse'); img.classList.add('ready'); };
-    img.onerror = () => {
-      cell.classList.remove('pulse');
-      img.remove();
-      cell.classList.add('tile');
-      cell.innerHTML = `<div class="glyph">${ICON.image}<span>${extLabel(item)}</span></div>`;
-    };
-    cell.appendChild(img);
-    cell._item = item;
-    cell._media = img;
-    addLabel(cell, item.name);
-    cell.onclick = () => openViewer(item);
-    observer.observe(cell);
-    return cell;
-  }
+  const thumb = document.createElement('div');
+  thumb.className = 'thumb';
+  cell.appendChild(thumb);
+  appendCap(cell, item.name);
 
-  if (item.kind === 'video') {
-    /* 封面走服务端抓帧（ffmpeg），不再塞 <video>：
+  if (item.kind === 'image' || item.kind === 'video' || item.kind === 'su') {
+    /* 视频封面走服务端抓帧（ffmpeg），不再塞 <video>：
        WebView2 里 preload=metadata 不解首帧、#t= 也时常不生效，格子里就是空白。 */
-    cell.className = 'cell video pulse';
+    const video = item.kind === 'video';
+    const su = item.kind === 'su';
+    cell.className = 'cell pulse' + (video ? ' video' : '') + (su ? ' su' : '');
     const img = document.createElement('img');
     img.alt = item.name;
     img.loading = 'lazy';
@@ -386,46 +410,60 @@ function makeCell(item) {
       cell.classList.remove('pulse');
       img.remove();
       cell.classList.add('tile');
-      cell.innerHTML = `<div class="glyph">${ICON.video}<span>${extLabel(item)}</span></div>`;
+      thumb.innerHTML = `<div class="glyph">${video ? ICON.video : su ? ICON.su : ICON.image}</div>`;
     };
-    cell.appendChild(img);
-    const badge = document.createElement('span');
-    badge.className = 'vbadge';
-    badge.innerHTML = `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 7.2 16.6 12 9 16.8V7.2Z"/></svg>`;
-    cell.appendChild(badge);
+    thumb.appendChild(img);
+    if (video) {
+      const badge = document.createElement('span');
+      badge.className = 'vbadge';
+      badge.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 7.2 16.6 12 9 16.8V7.2Z"/></svg>';
+      thumb.appendChild(badge);
+    }
+    if (su) {
+      const badge = document.createElement('span');
+      badge.className = 'sbadge';
+      badge.textContent = 'SU';
+      badge.title = 'SketchUp 模型预览（上次保存时的视角）';
+      thumb.appendChild(badge);
+    }
     cell._item = item;
     cell._media = img;
-    addLabel(cell, item.name);
     cell.onclick = () => openViewer(item);
     observer.observe(cell);
     return cell;
   }
 
-  // 相机 RAW：识别但不解码
-  if (item.kind === 'raw') {
-    cell.className = 'cell tile';
-    cell.innerHTML = `<div class="glyph">${ICON.image}<span>${extLabel(item)}</span></div>`;
-    addLabel(cell, item.name);
-    cell._item = item;
-    cell.onclick = () => openViewer(item);
-    return cell;
-  }
-
-  // PDF / HTML / AI
+  // 相机 RAW / PDF / HTML / AI / Office：不给位图，直接出图标
   cell.className = 'cell tile';
-  const icon = item.kind === 'pdf' ? ICON.pdf : ICON.html;
-  cell.innerHTML = `<div class="glyph">${icon}<span>${extLabel(item)}</span></div>`;
-  addLabel(cell, item.name);
+  const icon = item.kind === 'raw' ? ICON.image
+    : item.kind === 'pdf' ? ICON.pdf
+    : ICON[item.kind] || ICON.html;
+  thumb.innerHTML = `<div class="glyph">${icon}</div>`;
   cell._item = item;
   cell.onclick = () => openViewer(item);
   return cell;
 }
 
-function addLabel(cell, name) {
-  const l = document.createElement('div');
-  l.className = 'label';
-  l.textContent = name;
-  cell.appendChild(l);
+/* 相机、微信导出的文件常常是「很长且前缀一样的名字」，单行省略之后
+   一整屏全都显示成同一个前缀，等于没有名字。中间省略——留开头加结尾，
+   扩展名照常——这样每张图的差别至少还在。 */
+function fileCaption(name) {
+  const dot = name.lastIndexOf('.');
+  const ext = dot > 0 ? name.slice(dot) : '';
+  const base = dot > 0 ? name.slice(0, dot) : name;
+  if (base.length <= 16) return name;
+  return base.slice(0, 9) + '…' + base.slice(-6) + ext;
+}
+
+function appendCap(cell, name) {
+  const cap = document.createElement('div');
+  cap.className = 'cap';
+  const nm = document.createElement('span');
+  nm.className = 'nm';
+  nm.textContent = fileCaption(name);
+  nm.title = name;
+  cap.appendChild(nm);
+  cell.appendChild(cap);
 }
 
 function attachMedia(node, item) {
@@ -435,31 +473,23 @@ function attachMedia(node, item) {
     media.src = item.native ? fsUrl(item.path) : thumbUrl(item, 420);
   } else if (item.kind === 'video') {
     media.src = vframeUrl(item, 420);
+  } else if (item.kind === 'su') {
+    media.src = suUrl(item, 512);
   }
 }
 
 /* ------------------------------------------------------------ 单张视图 */
 
 let zoomEl = null;
-let infoTimer = null;
-let lastInfoMove = 0;
 let currentItem = null;
 
-/* 信息条只在需要时露一下：打开/切图停 1.5s，鼠标动停手 0.7s 就走，
-   免得一直压在画面底部挡内容。 */
-const INFO_HOLD_OPEN = 1500;
-const INFO_HOLD_MOVE = 700;
-
-function infoFlash(hold) {
-  el.info.classList.add('show');
-  clearTimeout(infoTimer);
-  infoTimer = setTimeout(() => el.info.classList.remove('show'), hold);
+/* 底栏常驻：文件名/序号/尺寸一直看得见，不再靠鼠标晃一下猜。
+   infoFlash / infoHide 保留成空壳，别的地方还在调它们。 */
+function infoFlash() {
+  if (el.info) el.info.classList.add('show');
 }
 
-function infoHide() {
-  clearTimeout(infoTimer);
-  el.info.classList.remove('show');
-}
+function infoHide() {}
 
 /* 视图切换的记忆：退回网格时记下「哪张图 + 缩放平移 + 网格滚动」，
    再点一次网格按钮原样回到这张。pendingView 只在一次渲染内有效，用完即弃。 */
@@ -477,6 +507,14 @@ let dragging = false, dragStart = null;
 /* 高分辨率图的源分级：缩小显示时用服务端预缩放版本，放大时换回原图 */
 let srcHi = '', srcLo = '', loW = 0, usingLo = false;
 
+/* 打开图片时的「从缩略图长成全屏」动效；没有可用的起点就退化成淡入 */
+let pendingFly = null;
+let flyAnim = null;
+let flyHeld = false;
+
+const prefersReducedMotion = () =>
+  !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
+
 function resetZoomState() {
   fitScale = 1;
   natW = 0; natH = 0;
@@ -485,12 +523,106 @@ function resetZoomState() {
   dragging = false; dragStart = null;
 }
 
+/* --- 打开动效：让缩略图「长」成全屏 -------------------------------- */
+
+function cellForPath(path) {
+  return [...el.grid.children].find((c) => c._item && c._item.path === path) || null;
+}
+
+/* 目标矩形：用缩略图的宽高比先算出来，图片还没 decode 完也能立刻开始动 */
+function flyTargetRect(nw, nh) {
+  const r = el.stage.getBoundingClientRect();
+  if (!r.width || !r.height || !nw || !nh) return null;
+  const s = Math.min(1, Math.min(r.width / nw, r.height / nh));
+  const w = nw * s;
+  const h = nh * s;
+  return {
+    left: r.left + (r.width - w) / 2,
+    top: r.top + (r.height - h) / 2,
+    width: w,
+    height: h,
+  };
+}
+
+function startFly(cell) {
+  if (!cell || prefersReducedMotion()) return false;
+  const thumbEl = cell.querySelector('.thumb');
+  const thumbImg = thumbEl && thumbEl.querySelector('img');
+  if (!thumbImg || !thumbImg.complete || !thumbImg.naturalWidth) return false;
+
+  const from = thumbEl.getBoundingClientRect();
+  const to = flyTargetRect(thumbImg.naturalWidth, thumbImg.naturalHeight);
+  if (!to || from.width < 6 || to.width < 6) return false;
+
+  const fly = document.createElement('img');
+  fly.className = 'fly';
+  fly.src = thumbImg.currentSrc || thumbImg.src;
+  fly.style.left = from.left + 'px';
+  fly.style.top = from.top + 'px';
+  fly.style.width = from.width + 'px';
+  fly.style.height = from.height + 'px';
+  document.body.appendChild(fly);
+
+  flyAnim = fly.animate(
+    [
+      { left: from.left + 'px', top: from.top + 'px', width: from.width + 'px',
+        height: from.height + 'px', borderRadius: '9px' },
+      { left: to.left + 'px', top: to.top + 'px', width: to.width + 'px',
+        height: to.height + 'px', borderRadius: '0px' },
+    ],
+    { duration: 300, easing: 'cubic-bezier(.2,.75,.25,1)', fill: 'both' }
+  );
+  const done = () => {
+    const stageImg = el.stage.querySelector('img.fit');
+    /* 原图已经解码好：先让它显形（位置和飞行终点一模一样，看不出切换），
+       下一帧再撤掉飞行层——同一帧里既没有飞行层也没有原图就会闪白 */
+    if (stageImg && stageImg.complete && stageImg.naturalWidth) {
+      /* 交接这一帧不能淡入：飞行层下面立刻要是原图，否则会透出网格。
+         这个 img 是本次渲染临时建的，transition 关掉就不用再还原了 */
+      stageImg.style.transition = 'none';
+      stageImg.classList.remove('pending');
+      requestAnimationFrame(dropFly);
+      return;
+    }
+    /* 原图还在解码：让飞行层停在终点继续顶着，等 load 事件再交接 */
+    flyHeld = true;
+  };
+  flyAnim.onfinish = done;
+  flyAnim.oncancel = () => { flyAnim = null; flyHeld = false; fly.remove(); };
+  return true;
+}
+
+/* 撤掉飞行层、把查看器的底色交还回来（飞行期间是透明的，网格还在下面） */
+function dropFly() {
+  flyAnim = null;
+  flyHeld = false;
+  document.querySelectorAll('img.fly').forEach((n) => n.remove());
+  el.viewer.classList.remove('flying');
+}
+
+/* 图片解析好、飞行动画也放完了，才把它显出来——中间不会闪空 */
+function revealCurrent() {
+  const img = el.stage.querySelector('img.fit');
+  if (!img || !img.complete || !img.naturalWidth) return;
+  if (flyAnim && !flyHeld) return;   /* 还在飞，等落地再说 */
+  if (flyHeld) {
+    /* 飞行层正停在终点等这张图：直接交接，别做透明度过渡，否则中间会透出网格 */
+    img.style.transition = 'none';
+    img.classList.remove('pending');
+    flyHeld = false;
+    requestAnimationFrame(dropFly);
+    return;
+  }
+  img.classList.remove('pending');
+}
+
 function openViewer(item) {
   state.index = state.viewable.findIndex((x) => x.path === item.path);
   if (state.index < 0) return;
   /* 主动打开某一张，之前记的「返回位置」作废 */
   viewMemo = null;
   markLastCell(null);
+  pendingFly = item.kind === 'image' ? cellForPath(item.path) : null;
   el.viewer.hidden = false;
   document.body.classList.add('in-viewer');
   renderViewer();
@@ -499,6 +631,13 @@ function openViewer(item) {
 
 function closeViewer(silent = false) {
   if (el.viewer.hidden) return;
+  /* 动画还没放完就退出去了，把飞的那个元素收掉，别留在网格上 */
+  if (flyAnim) {
+    try { flyAnim.cancel(); } catch (err) { /* 忽略 */ }
+    flyAnim = null;
+    document.querySelectorAll('img.fly').forEach((n) => n.remove());
+  }
+  dropFly();
   /* 退回网格前，把当前位置整份记下来 */
   if (!silent && currentItem && state.index >= 0) {
     const v = el.stage.querySelector('video');
@@ -605,6 +744,14 @@ function updateNav() {
 function renderViewer() {
   const item = state.viewable[state.index];
   if (!item) return;
+  /* 上一张的飞行动画可能还没落地，先收干净，别让它盖在新图上 */
+  if (flyAnim) {
+    try { flyAnim.cancel(); } catch (err) { /* 忽略 */ }
+    flyAnim = null;
+  }
+  document.querySelectorAll('img.fly').forEach((n) => n.remove());
+  el.viewer.classList.remove('flying');
+  flyHeld = false;
   currentItem = item;
   el.stage.innerHTML = '';
   el.stage.onwheel = null;
@@ -623,7 +770,12 @@ function renderViewer() {
     const img = document.createElement('img');
     img.alt = item.name;
     img.draggable = false;
-    img.className = 'fit';
+    img.className = 'fit pending';
+    /* 有起点就和飞行同时开始，观感上「点下去就动了」；没起点就等加载完淡入 */
+    const flyFrom = pendingFly;
+    pendingFly = null;
+    /* 飞行期间查看器底色透明，让网格留在下面当背景，这样点下去不会先白一下 */
+    if (flyFrom && startFly(flyFrom)) el.viewer.classList.add('flying');
     el.zoomBar.hidden = false;
     el.edit.hidden = !window.BNImageEditor;
 
@@ -651,9 +803,12 @@ function renderViewer() {
       bindZoom(img);
       showInfo(item, `${natW} × ${natH}`);
       if (item.native) setupLowSource(item);
+      revealCurrent();
     }, { once: true });
 
     img.addEventListener('error', () => {
+      img.classList.remove('pending');
+      dropFly();
       showInfo(item, '无法解码此格式');
       errorState(item, '浏览器与本地解码器都无法读取这张图片');
     }, { once: true });
@@ -661,6 +816,60 @@ function renderViewer() {
     el.stage.appendChild(img);
   } else if (item.kind === 'video') {
     showVideo(item, restore && restore.kind === 'video' ? restore.mediaTime : 0);
+  } else if (item.kind === 'su') {
+    /* SketchUp 模型：只有文件里自带的 256px 预览图，不做缩放/编辑，
+       放大只会变糊；给一个「用 SketchUp 打开」的出口就行。
+       模型里存过的场景（轴测图、平面图…）各有小图，点击就地切换。 */
+    const wrap = document.createElement('div');
+    wrap.className = 'su-wrap';
+    const card = document.createElement('div');
+    card.className = 'su-card';
+    const im = document.createElement('img');
+    im.className = 'su-shot';
+    im.alt = item.name;
+    im.src = suUrl(item, 512);
+    card.appendChild(im);
+
+    const strip = document.createElement('div');
+    strip.className = 'su-scenes';
+    strip.hidden = true;
+    card.appendChild(strip);
+
+    const foot = document.createElement('div');
+    foot.className = 'su-foot';
+    foot.innerHTML = `<span>SketchUp 预览图 · 文件里自带的上次保存视角</span>
+      <button onclick="openExternal('${encodeURIComponent(item.path)}')">用 SketchUp 打开</button>`;
+    card.appendChild(foot);
+
+    wrap.appendChild(card);
+    el.stage.appendChild(wrap);
+    showInfo(item, 'SketchUp 模型');
+
+    const base = `/api/su?path=${encodeURIComponent(item.path)}&w=`;
+    const pick = (btn) => {
+      for (const b of strip.children) b.classList.toggle('on', b === btn);
+    };
+    fetch(`/api/su-scenes?path=${encodeURIComponent(item.path)}`)
+      .then((r) => r.json())
+      .then((d) => {
+        const list = (d && d.scenes) || [];
+        if (!list.length) return;
+        list.forEach((s, i) => {
+          const b = document.createElement('button');
+          b.className = 'su-scene';
+          b.title = s.name;
+          const t = document.createElement('img');
+          t.src = `${base}256&scene=${i}${item.rev ? '&r=' + item.rev : ''}`;
+          t.alt = s.name;
+          const lb = document.createElement('span');
+          lb.textContent = s.name;
+          b.append(t, lb);
+          b.onclick = () => { pick(b); im.src = `${base}512&scene=${i}${item.rev ? '&r=' + item.rev : ''}`; };
+          strip.appendChild(b);
+        });
+        strip.hidden = false;
+      })
+      .catch(() => { /* 没有场景就只显示预览图 */ });
   } else if (item.kind === 'pdf') {
     const wrap = document.createElement('div');
     wrap.className = 'frame-wrap';
@@ -670,6 +879,18 @@ function renderViewer() {
     wrap.appendChild(f);
     el.stage.appendChild(wrap);
     showInfo(item, 'PDF');
+  } else if (item.kind === 'docx' || item.kind === 'xlsx' || item.kind === 'pptx') {
+    /* Office 三种：服务端把文件转成一张网页，这里直接嵌进来 */
+    const label = { docx: 'Word 文档', xlsx: 'Excel 表格', pptx: 'PowerPoint 演示' }[item.kind];
+    const wrap = document.createElement('div');
+    wrap.className = 'frame-wrap';
+    wrap.innerHTML = `<div class="frame-note"><span>${label} · 内置预览（图形与表格按原样排版，图表不还原）</span><button onclick="openExternal('${encodeURIComponent(item.path)}')">用默认程序打开</button></div>`;
+    const f = document.createElement('iframe');
+    f.setAttribute('sandbox', 'allow-same-origin');
+    f.src = `/api/office?path=${encodeURIComponent(item.path)}&theme=${state.theme}${item.rev ? '&r=' + item.rev : ''}`;
+    wrap.appendChild(f);
+    el.stage.appendChild(wrap);
+    showInfo(item, label);
   } else if (item.kind === 'raw') {
     errorState(item, '相机 RAW 原片暂不解码，可用系统默认程序或相机厂商软件打开');
     showInfo(item, 'RAW 原片');
@@ -883,7 +1104,7 @@ async function showInfo(item, extra) {
     : '';
   const bits = [idx, extra, fmtSize(item.size)].filter(Boolean);
   el.info.innerHTML = `<span class="fname">${escapeHtml(item.name)}</span><span class="meta">${bits.join(' · ')}</span>`;
-  infoFlash(INFO_HOLD_OPEN);
+  infoFlash();
 }
 
 /* ------------------------------------------------------------ 缩放 */
@@ -960,6 +1181,19 @@ function actualSize() {
 
 /* --- 源分级：缩小用预缩放图，放大回原图 --- */
 
+/* 原图先在后台解一遍：全屏 / 放大时换源就不用再等解码，
+   否则读者会看到「图先停在旧尺寸、愣一下才跟上」。 */
+const preloaded = new Map();
+
+function preloadHi(url) {
+  if (!url || preloaded.has(url)) return;
+  const im = new Image();
+  im.decoding = 'async';
+  preloaded.set(url, im);
+  im.src = url;
+  if (im.decode) im.decode().catch(() => {});
+}
+
 function setupLowSource(item) {
   const ok = ['jpg', 'jpeg', 'png', 'webp'];
   if (!ok.includes(String(item.ext || '').toLowerCase())) return;
@@ -978,11 +1212,19 @@ function setupLowSource(item) {
   srcLo = renderUrl(item, level);
   usingLo = true;
   swapTo(srcLo);
+  preloadHi(srcHi);
 }
 
 function swapTo(url) {
   if (!zoomEl || !url || zoomEl.dataset.src === url) return;
   const seq = ++swapSeq;
+  const hit = preloaded.get(url);
+  /* 已经解码好的直接用，省掉一次「加载中」的空窗 */
+  if (hit && hit.complete && hit.naturalWidth) {
+    zoomEl.src = url;
+    zoomEl.dataset.src = url;
+    return;
+  }
   const pre = new Image();
   pre.onload = () => {
     if (!zoomEl || seq !== swapSeq) return;
@@ -1099,15 +1341,17 @@ function panelContent() {
   const row = (k, v, cls = '') => `<div class="fmt-group"><div class="k">${k}</div><div class="v ${cls}">${v}</div></div>`;
   return `
   <h1>BNImage</h1>
-  <p class="sub">统一文件查看器 · v1.0 · 本地只读</p>
+  <p class="sub">统一文件查看器 · v${APP_VER} · 本地只读</p>
 
   <h2>支持的格式</h2>
   ${row('照片与位图', 'JPG JPEG JPE JFIF PJPG PNG APNG GIF WEBP AVIF BMP DIB ICO CUR<br>TIF TIFF HEIC HEIF HIF PPM PGM PBM PNM')}
   ${row('图形与矢量', 'SVG SVGZ<br><span class="dim">AI（PDF 兼容部分以 PDF 方式打开）· RAW 相机原片暂不解码</span>')}
   ${row('视频', 'MP4 M4V MOV WEBM OGV OGG TS M2TS MTS MKV AVI WMV FLV F4V MPG MPEG VOB 3GP 3G2<br><span class="dim">能否播放取决于系统与浏览器内的编码支持，失败时可一键交给系统播放器</span>')}
   ${row('文档', 'PDF<br><span class="dim">使用内置阅读器，可翻页、缩放、搜索</span>')}
+  ${row('Office', 'DOCX XLSX PPTX<br><span class="dim">内置转成网页来看：文字、表格、图片与版面按原样排，图表、SmartArt 不还原。不启动 Word / Excel / PowerPoint</span>')}
   ${row('网页', 'HTML HTM XHTML<br><span class="dim">沙箱内渲染，可直接查看本地导出的作品页</span>')}
-  ${row('不纳入', '<span class="x">PPT PPTX PPS PPSX POT POTX KEY ODP</span><br><span class="dim">按需求明确排除演示文稿，避免与浏览器内置行为冲突</span>')}
+  ${row('模型', 'SKP<br><span class="dim">直接读 SketchUp 存在文件里的预览图（256px）和存过的场景，不解析几何、不启动 SketchUp</span>')}
+  ${row('不纳入', '<span class="x">DOC XLS PPT PPS PPSX POT POTX KEY ODP</span><br><span class="dim">旧版二进制格式与幻灯片放映格式不展开，避免与系统内置行为冲突</span>')}
 
   <h2>操作</h2>
   <div class="kbd-grid">
@@ -1131,7 +1375,7 @@ function panelContent() {
   <h2>说明</h2>
   <p>所有文件只在你的电脑上被读取，不上传、不联网、不修改原文件。缩略图缓存在程序目录的 <code>.cache</code> 中，可随时删除。</p>
 
-  <div class="panel-foot"><span>BNImage 1.3</span><span>Esc 关闭</span></div>`;
+  <div class="panel-foot"><span>BNImage ${APP_VER}</span><span>Esc 关闭</span></div>`;
 }
 
 /* ------------------------------------------------------------ 地址栏 */
@@ -1217,12 +1461,47 @@ function handleResize() {
 }
 
 function bindEvents() {
-  window.addEventListener('resize', () => {
-    syncCellHeight();
-    handleResize();
-  });
+  /* 一次 resize 风暴只算一遍布局：合并到下一帧，避免每个事件都强制回流 */
+  let resizeTick = 0;
+  const onResize = () => {
+    if (resizeTick) return;
+    resizeTick = requestAnimationFrame(() => {
+      resizeTick = 0;
+      syncCellHeight();
+      handleResize();
+    });
+  };
+  window.addEventListener('resize', onResize, { passive: true });
+  /* 进出全屏时窗口尺寸先变、resize 后到，补一帧让图立刻跟上 */
+  document.addEventListener('fullscreenchange', onResize);
   /* 窗口宽度变化、滚动条出现/消失都会改变列宽，行高跟着重算 */
   if (window.ResizeObserver) new ResizeObserver(() => syncCellHeight()).observe(el.grid);
+
+  /* 缩略图大小选择 */
+  const sizeWrap = $('.size-wrap');
+  const sizePop = $('#sizePop');
+  const sizeBtn = $('#btnSize');
+  const setPop = (open) => {
+    sizePop.hidden = !open;
+    sizeBtn.classList.toggle('on', open);
+    sizeBtn.setAttribute('aria-expanded', open ? 'true' : 'false');
+  };
+  if (sizeBtn) {
+    sizeBtn.onclick = (e) => { e.stopPropagation(); setPop(sizePop.hidden); };
+    sizePop.onclick = (e) => {
+      const b = e.target.closest('button[data-size]');
+      if (!b) return;
+      applyCellSize(Number(b.dataset.size));
+      setPop(false);
+    };
+    document.addEventListener('pointerdown', (e) => {
+      if (!sizePop.hidden && !sizeWrap.contains(e.target)) setPop(false);
+    });
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape' && !sizePop.hidden) setPop(false);
+    });
+  }
+
   $('#btnTheme').onclick = () => applyTheme(state.theme === 'dark' ? 'light' : 'dark');
   $('#btnInfo').onclick = showPanel;
   $('#btnGrid').onclick = () => toggleViewMode();
@@ -1233,39 +1512,6 @@ function bindEvents() {
   el.next.onclick = () => step(1);
   el.edit.onclick = () => openEditorFor(currentItem);
 
-  /* 翻页按钮默认隐身：指针进到图标外扩 NAV_PAD 之内才浮出，
-     其余区域按钮不接管指针，画面拖动/点击完全不受影响 */
-  const NAV_PAD = 22;
-  let navTick = 0;
-  const revealNav = (x, y) => {
-    navTick = 0;
-    [el.prev, el.next].forEach((zone) => {
-      if (!zone || zone.classList.contains('off')) return;
-      const r = zone.getBoundingClientRect();
-      const near = x >= r.left - NAV_PAD && x <= r.right + NAV_PAD &&
-                   y >= r.top - NAV_PAD && y <= r.bottom + NAV_PAD;
-      zone.classList.toggle('near', near);
-    });
-  };
-  el.viewer.addEventListener('mousemove', (e) => {
-    if (navTick || el.viewer.hidden) return;
-    const x = e.clientX, y = e.clientY;
-    navTick = requestAnimationFrame(() => revealNav(x, y));
-  });
-  const hideNav = () => {
-    el.prev.classList.remove('near');
-    el.next.classList.remove('near');
-  };
-  el.viewer.addEventListener('mouseleave', hideNav);
-  /* 指针跑到顶栏、边框上时按钮也不该赖着 */
-  window.addEventListener('mousemove', (e) => {
-    if (navTick || el.viewer.hidden) return;
-    const x = e.clientX, y = e.clientY;
-    if (el.viewer.contains(e.target)) return;
-    navTick = requestAnimationFrame(() => revealNav(x, y));
-  });
-  window.addEventListener('blur', hideNav);
-
   el.zoomIn.onclick = () => zoomBy(1.25);
   el.zoomOut.onclick = () => zoomBy(0.8);
   el.zoomFit.onclick = () => fitToWindow();
@@ -1273,17 +1519,6 @@ function bindEvents() {
   el.zoomPct.onclick = () => actualSize();
   /* 拖按钮时不触发舞台上的指针事件 */
   el.zoomBar.addEventListener('pointerdown', (e) => e.stopPropagation());
-
-  /* 鼠标滑动时露一下，停手 0.7s 就收；拖动画面/缩放的当口不再弹 */
-  el.stage.addEventListener('mousemove', () => {
-    if (!currentItem || dragging) return;
-    const now = Date.now();
-    if (now - lastInfoMove < 120 && el.info.classList.contains('show')) return;
-    lastInfoMove = now;
-    infoFlash(INFO_HOLD_MOVE);
-  });
-  el.stage.addEventListener('pointerleave', infoHide);
-  el.stage.addEventListener('pointerdown', infoHide);
 
   el.panel.onclick = (e) => { if (e.target === el.panel) closePanel(); };
 
@@ -1529,6 +1764,7 @@ async function handleRoute(p, isDir) {
 
 async function boot() {
   initTheme();
+  initCellSize();
   bindEvents();
   /* 尽早建立接管通道：启动器只等约 1 秒，晚了就会被判成"页面没接单" */
   setTimeout(startPolling, 60);

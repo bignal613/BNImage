@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+﻿#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
 BNImage · 统一查看器
@@ -23,9 +23,11 @@ import sys
 import tempfile
 import threading
 import time
+import traceback
 import urllib.parse
 import urllib.request
 import webbrowser
+import zipfile
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
@@ -70,7 +72,7 @@ except Exception:
     pass
 
 APP_NAME = "BNImage"
-APP_VERSION = "1.7"
+APP_VERSION = "2.2"
 MAX_UPLOAD = 200 * 1024 * 1024      # 编辑结果回写的上限
 FROZEN = bool(getattr(sys, "frozen", False))
 if FROZEN:
@@ -177,6 +179,17 @@ VIDEO = {
 PDF = {".pdf"}
 ILLUSTRATOR = {".ai"}          # PDF 兼容的 ai 可预览
 HTML = {".html", ".htm", ".xhtml", ".shtml"}
+# SketchUp 模型：文件本身是个 zip 包，里面带 SketchUp 自己存的预览图，
+# 取出来就能看，不用解析几何、也不用装任何东西。
+SKETCHUP = {".skp"}
+# Office 三种：文件本身都是 zip + XML，交给 officeview 自己拼网页，不依赖
+# Word/Excel/PowerPoint 或 LibreOffice（这台机器上都没有）。
+OFFICE = {".docx": "docx", ".xlsx": "xlsx", ".pptx": "pptx"}
+try:
+    from officeview import render as _office_render  # noqa: E402
+    import officeview
+except Exception:
+    officeview = None
 RAW_IMAGE = {".cr2", ".cr3", ".nef", ".arw", ".dng", ".orf", ".rw2",
              ".raf", ".srw", ".pef", ".rwl", ".raw", ".3fr", ".erf", ".mef"}
 
@@ -185,11 +198,15 @@ PRESENTATION = {".ppt", ".pptx", ".pps", ".ppsx", ".pot", ".potx",
                 ".pptm", ".potm", ".ppsm", ".key", ".odp", ".dps", ".dpt"}
 
 IMAGE_ANY = NATIVE_IMAGE | DECODE_IMAGE
-SUPPORTED = IMAGE_ANY | VIDEO | PDF | ILLUSTRATOR | HTML
+SUPPORTED = IMAGE_ANY | VIDEO | PDF | ILLUSTRATOR | HTML | SKETCHUP | set(OFFICE)
 
 # 系统/资源管理器自动生成的垃圾文件，列表里直接跳过
 JUNK_FILES = {"thumbs.db", "ehthumbs.db", "ehthumbs_vista.db", "desktop.ini",
               "iconcache.db", "folder.ini"}
+
+# SketchUp 每次保存都会在同目录留一份 .skb 备份（体积和模型一样大），
+# 对看图没有任何意义，跟着算「不支持的文件」只会让提示里凭空多出一倍数量。
+JUNK_EXT = {".skb"}
 
 MIME_OVERRIDE = {
     ".svg": "image/svg+xml",
@@ -237,6 +254,10 @@ def classify(path: str) -> str:
         return "pdf"
     if ext in HTML:
         return "html"
+    if ext in SKETCHUP:
+        return "su"
+    if ext in OFFICE:
+        return OFFICE[ext]
     if ext in RAW_IMAGE:
         return "raw"
     if ext in PRESENTATION:
@@ -245,7 +266,7 @@ def classify(path: str) -> str:
 
 
 def is_supported(path: str) -> bool:
-    return classify(path) in ("image", "video", "pdf", "html")
+    return classify(path) in ("image", "video", "pdf", "html", "su", "docx", "xlsx", "pptx")
 
 
 def natural_key(name: str):
@@ -256,6 +277,10 @@ def natural_key(name: str):
 
 def _thumb_path(key: str) -> Path:
     return CACHE / key[:2] / (key + ".webp")
+
+
+def _office_cache(key: str) -> Path:
+    return CACHE / "of" / key[:2] / (key + ".html")
 
 
 def _open_image(path: str):
@@ -400,6 +425,141 @@ def build_render(path: str, max_side: int):
     im = _open_image(path)
     data = _to_webp(im, max_side, 92)
     im.close()
+    try:
+        cached.parent.mkdir(parents=True, exist_ok=True)
+        tmp = cached.with_suffix(".tmp")
+        tmp.write_bytes(data)
+        os.replace(tmp, cached)
+    except OSError:
+        pass
+    return data
+
+
+# SketchUp 会把「上次保存时看到的画面」存进 .skp 里当预览图。.skp 本身是个
+# zip 包，取这张图只是读一个小文件，就算模型 500MB 也只要几十毫秒——不解几何、
+# 不启动 SketchUp，正是「先快速看一眼」最合适的做法。SU_PREVIEWS = ("meta/preview_thumbnail.png", "meta/model_thumbnail.png")
+SU_MEMO = {}
+
+
+def su_zip_name(raw: bytes) -> str:
+    """zip 里的中文名多半没打 UTF-8 标记，zipfile 会按 cp437 解，
+    这里按原始字节还原成 UTF-8，场景名才不会变成乱码。"""
+    if isinstance(raw, str):
+        try:
+            return raw.encode("cp437").decode("utf-8")
+        except (UnicodeEncodeError, UnicodeDecodeError):
+            return raw
+    return raw
+
+
+def su_scene_names(path: str):
+    """模型里保存过的场景（每张一张 256×131 的小图），用于切换视角"""
+    try:
+        with zipfile.ZipFile(path) as z:
+            out = []
+            for info in z.infolist():
+                n = info.filename
+                if not n.startswith("scene_thumbnails/") or not n.lower().endswith(".png"):
+                    continue
+                base = su_zip_name(n[len("scene_thumbnails/"):-4])
+                out.append((base, n))
+            return out
+    except (zipfile.BadZipFile, OSError, KeyError, RuntimeError):
+        return []
+
+
+def su_preview_bytes(path: str, scene: int = -1):
+    """从 .skp 里取出内嵌预览图的原始字节，取不到返回 None"""
+    try:
+        with zipfile.ZipFile(path) as z:
+            if scene >= 0:
+                scenes = su_scene_names(path)
+                if 0 <= scene < len(scenes):
+                    data = z.read(scenes[scene][1])
+                    if data:
+                        return data
+                return None
+            names = set(z.namelist())
+            for name in SU_PREVIEWS:
+                if name in names:
+                    data = z.read(name)
+                    if data:
+                        return data
+    except (zipfile.BadZipFile, OSError, KeyError, RuntimeError):
+        pass
+    return None
+
+
+def build_su_thumb(path: str, box: int = 512, scene: int = -1):
+    """返回 (bytes, mime) 或 None。预览图本身 256px，放大只会变糊，box 只用来缩小。"""
+    if not HAS_PIL:
+        return None
+    try:
+        st = os.stat(path)
+    except OSError:
+        return None
+    key = "s" + hashlib.md5(
+        f"{path}|{st.st_mtime_ns}|{st.st_size}|{box}|{scene}".encode("utf-8", "replace")
+    ).hexdigest()
+    cached = _thumb_path(key)
+    if cached.exists():
+        try:
+            return cached.read_bytes(), "image/webp"
+        except OSError:
+            pass
+    raw = su_preview_bytes(path, scene)
+    if not raw:
+        return None
+    try:
+        im = Image.open(io.BytesIO(raw))
+        im.load()
+    except Exception:
+        return None
+    try:
+        data = _to_webp(im, box, 92)
+    finally:
+        try:
+            im.close()
+        except Exception:
+            pass
+    try:
+        cached.parent.mkdir(parents=True, exist_ok=True)
+        tmp = cached.with_suffix(".tmp")
+        tmp.write_bytes(data)
+        os.replace(tmp, cached)
+    except OSError:
+        pass
+    return data, "image/webp"
+
+
+# 渲染逻辑一变就加一，旧的缓存文件自动失效
+OFFICE_VER = 3
+
+
+def build_office_html(path: str, theme: str = "light"):
+    """把 docx/xlsx/pptx 转成一份静态网页（带磁盘缓存），返回 bytes 或 None"""
+    if officeview is None:
+        return None
+    try:
+        st = os.stat(path)
+    except OSError:
+        return None
+    key = "o" + hashlib.md5(
+        f"{path}|{st.st_mtime_ns}|{st.st_size}|{theme}|{OFFICE_VER}".encode("utf-8", "replace")
+    ).hexdigest()
+    cached = _office_cache(key)
+    if cached.exists():
+        try:
+            return cached.read_bytes()
+        except OSError:
+            pass
+    try:
+        data = officeview.render(path, theme)
+    except Exception:
+        traceback.print_exc()
+        return None
+    if not data:
+        return None
     try:
         cached.parent.mkdir(parents=True, exist_ok=True)
         tmp = cached.with_suffix(".tmp")
@@ -868,6 +1028,8 @@ def list_dir(path: str):
                         continue
                     # 系统自己生成的文件，不算「不支持的文件」，免得白提醒
                     if e.name.lower() in JUNK_FILES:
+                        continue
+                    if os.path.splitext(e.name)[1].lower() in JUNK_EXT:
                         continue
                     if e.is_dir(follow_symlinks=False):
                         dirs.append({"name": e.name, "path": e.path, "kind": "dir"})
@@ -1344,6 +1506,45 @@ class Handler(BaseHTTPRequestHandler):
                 data, ctype = res
                 return self._send(200, data, ctype,
                                   {"Cache-Control": "private, max-age=86400"})
+
+            if route == "/api/su":
+                raw = q.get("path", [""])[0]
+                path = safe_path(raw)
+                if not path or not os.path.isfile(path):
+                    return self._send(404, "not found")
+                try:
+                    size = max(64, min(1024, int(q.get("w", ["512"])[0] or 512)))
+                    scene = int(q.get("scene", ["-1"])[0] or -1)
+                    res = build_su_thumb(path, size, scene)
+                except Exception:
+                    res = None
+                if res is None:
+                    return self._send(404, "no preview")
+                data, ctype = res
+                return self._send(200, data, ctype,
+                                  {"Cache-Control": "private, max-age=3600"})
+
+            if route == "/api/office":
+                path = safe_path(q.get("path", [""])[0])
+                if not path or not os.path.isfile(path):
+                    return self._send(404, "not found")
+                theme = q.get("theme", ["light"])[0]
+                if theme not in ("light", "dark"):
+                    theme = "light"
+                data = build_office_html(path, theme)
+                if data is None:
+                    return self._send(404, "cannot render")
+                # 转换结果在磁盘上有缓存（毫秒级），但对浏览器一律不缓存：
+                # 文件改过之后重新打开必须看到新的，不能让 WebView2 拿旧页面顶着。
+                return self._send(200, data, "text/html; charset=utf-8",
+                                  {"Cache-Control": "no-store"})
+
+            if route == "/api/su-scenes":
+                path = safe_path(q.get("path", [""])[0])
+                if not path or not os.path.isfile(path):
+                    return self._json({"scenes": []}, 404)
+                scenes = [{"name": n} for n, _ in su_scene_names(path)]
+                return self._json({"scenes": scenes})
 
             if route in ("/api/thumb", "/api/render"):
                 raw = q.get("path", [""])[0]
@@ -2110,10 +2311,10 @@ _DWMWA_CAPTION_COLOR = 35
 _DWMWA_TEXT_COLOR = 36
 
 # COLORREF = 0x00BBGGRR，取色对齐界面自己的配色：
-# 深色 #0C0C0D（=--bg，与顶栏同色，接缝不可见）/ 浅色 #FBFBFA（=--bg 浅色）
+# 深色 #0D0D0F（=--bg，与顶栏同色，接缝不可见）/ 浅色 #FFFFFF（=--bg 浅色）
 CAPTION_COLORS = {
-    "dark":  {"caption": 0x000D0C0C, "border": 0x002E2A2A, "text": 0x00F0EDED},
-    "light": {"caption": 0x00FAFBFB, "border": 0x00D6DCDC, "text": 0x001A1616},
+    "dark":  {"caption": 0x000F0D0D, "border": 0x000F0D0D, "text": 0x00F0EDED},
+    "light": {"caption": 0x00FFFFFF, "border": 0x00FFFFFF, "text": 0x001A1616},
 }
 
 
@@ -2364,7 +2565,7 @@ def open_native_window(url):
         # 小屏上算出来的尺寸可能比 min_size 还小，别让 MinimumSize 再把它顶出去
         min_size=(min(880, ww), min(560, wh)),
         # 底色跟着上次的主题走，深色下开窗不会先白一下
-        background_color=("#0C0C0D" if theme == "dark" else "#F6F6F4"),
+        background_color=("#0D0D0F" if theme == "dark" else "#FFFFFF"),
     )
 
     shown = [False]

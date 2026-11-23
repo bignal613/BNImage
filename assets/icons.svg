@@ -1,0 +1,80 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="0" height="0" style="position:absolute">
+<!--
+  BNImage 格式图标（24×24 网格）
+  统一规则：stroke 1.5、圆头圆角（stroke-linecap/linejoin: round）、
+  容器圆角 rx≈2.6 —— 比直线方角柔和，但不至于圆成卡通。
+  与 web/app.js 里的 ICON 保持一模一样，改这里记得同步那边。
+-->
+<defs>
+  <!-- 共用：圆角文档外形 -->
+  <symbol id="doc" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"
+          stroke-linecap="round" stroke-linejoin="round">
+    <path d="M6.5 3.6h6.2c.3 0 .6.12.82.34l3.6 3.6c.22.22.34.52.34.82v11.1c0 .9-.72 1.6-1.62 1.6H6.5c-.9 0-1.62-.7-1.62-1.6V5.2c0-.9.72-1.6 1.62-1.6Z"/>
+    <path d="M12.9 3.9v3.4c0 .72.58 1.3 1.3 1.3h3.3"/>
+  </symbol>
+
+  <symbol id="i-folder" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"
+          stroke-linecap="round" stroke-linejoin="round">
+    <path d="M3.3 7.6c0-1.27 1.03-2.3 2.3-2.3h3.4c.66 0 1.28.28 1.72.77l.92 1.03h6.76c1.27 0 2.3 1.03 2.3 2.3v7.2c0 1.27-1.03 2.3-2.3 2.3H5.6c-1.27 0-2.3-1.03-2.3-2.3V7.6Z"/>
+  </symbol>
+
+  <symbol id="i-image" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"
+          stroke-linecap="round" stroke-linejoin="round">
+    <rect x="3.3" y="5.2" width="17.4" height="13.6" rx="2.6"/>
+    <circle cx="8.6" cy="10" r="1.5"/>
+    <path d="M4.2 17.4 9.5 12l3.4 3.3 2.4-2.3 4.3 4.1"/>
+  </symbol>
+
+  <symbol id="i-video" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"
+          stroke-linecap="round" stroke-linejoin="round">
+    <rect x="3.3" y="5.2" width="17.4" height="13.6" rx="2.6"/>
+    <path d="m10.3 9.2 4.7 2.8-4.7 2.8V9.2Z"/>
+  </symbol>
+
+  <symbol id="i-drive" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"
+          stroke-linecap="round" stroke-linejoin="round">
+    <rect x="3.3" y="6" width="17.4" height="12" rx="2.6"/>
+    <path d="M3.3 12.8h17.4"/>
+    <circle cx="6.9" cy="15.4" r=".9" fill="currentColor" stroke="none"/>
+  </symbol>
+
+  <symbol id="i-su" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"
+          stroke-linecap="round" stroke-linejoin="round">
+    <path d="M12 3.3 19.9 7.6v8.8L12 20.7 4.1 16.4V7.6Z"/>
+    <path d="M4.1 7.6 12 12l7.9-4.4M12 12v8.7"/>
+  </symbol>
+
+  <symbol id="i-pdf" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"
+          stroke-linecap="round" stroke-linejoin="round">
+    <use href="#doc"/>
+    <path d="M7.4 17.3v-4.6h1.35a1.3 1.3 0 0 1 0 2.6H7.4" stroke-width="1.3"/>
+    <path d="M9.7 17.3v-4.6h1.05c1.2 0 1.9.9 1.9 2.3s-.7 2.3-1.9 2.3H9.7" stroke-width="1.3"/>
+    <path d="M14.8 12.7h-1.9v4.6M14.4 14.9h-1.5" stroke-width="1.3"/>
+  </symbol>
+
+  <symbol id="i-docx" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"
+          stroke-linecap="round" stroke-linejoin="round">
+    <use href="#doc"/>
+    <path d="M8 12.4h8M8 15h8M8 17.6h5"/>
+  </symbol>
+
+  <symbol id="i-html" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"
+          stroke-linecap="round" stroke-linejoin="round">
+    <use href="#doc"/>
+    <path d="m10 12.6-2 2.1 2 2.1M14 12.6l2 2.1-2 2.1"/>
+  </symbol>
+
+  <symbol id="i-xlsx" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"
+          stroke-linecap="round" stroke-linejoin="round">
+    <rect x="3.6" y="4.4" width="16.8" height="15.2" rx="2.6"/>
+    <path d="M3.6 9.4h16.8M3.6 14.4h16.8M9.4 9.4v10.2M14.6 9.4v10.2"/>
+  </symbol>
+
+  <symbol id="i-pptx" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"
+          stroke-linecap="round" stroke-linejoin="round">
+    <rect x="3.4" y="4.9" width="17.2" height="11.6" rx="2.6"/>
+    <path d="M12 16.5v3.2M8.6 20h6.8"/>
+    <path d="M8.6 12.9v-3M12 12.9V9.4M15.4 12.9V7.9" stroke-width="1.9"/>
+  </symbol>
+</defs>
+</svg>
