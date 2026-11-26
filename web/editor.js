@@ -21,7 +21,10 @@
     ['Arial', 'Arial'],
     ['Georgia', 'Georgia'],
   ];
-  const PREVIEW_MAX = 2560;
+  /* 画布四周留白：图片贴到窗口边时，裁剪手柄会压在窗口边框上，
+   一拖就变成拖窗口。留 14px 让手柄始终落在画面里面。 */
+const EDIT_SAFE = 14;
+const PREVIEW_MAX = 2560;
   const LOOK_SHARP_MAX = 4096;   // 放大细看时影调用的高清缓冲上限（长边）
   const HIST_MAX = 80;
 
@@ -79,8 +82,13 @@
     lookSharpScale: 1,
     lookSharpKey: '',
     W: 0, H: 0,
+    /* 方向：T 是「原图坐标 → 当前画面坐标」的 2x3 矩阵 [a,b,c,d,e,f]，
+       旋转/镜像都乘到它上面；底图由它从原图重新生成，撤销也能还原。 */
+    T: [1, 0, 0, 1, 0, 0],
+    origSrc: null, origPv: null,
+    origW: 0, origH: 0, origPvW: 0, origPvH: 0, origPvScale: 1,
     doc: null,
-    tool: 'crop',
+    tool: 'brush',
     scale: 1,
     fit: 1,
     panX: 0,
@@ -91,9 +99,17 @@
     aspect: 0,
     cropSel: null,
     brush: { color: '#ff3b30', size: 10 },
+    eraser: { size: 40 },   // 直径，和笔刷同一个量纲
     arrow: { color: '#ff3b30', size: 6, both: false },
     txt: { font: 'Microsoft YaHei', size: 56, color: '#ffffff' },
+    /* 透视尺：mode 0 关 / 1 一点 / 2 两点；p1/p2 是消失点，存原图坐标，
+       缩放平移时跟着画面走，导出时绝不画进去 */
+    persp: {
+      mode: 0, p1: { x: 0, y: 0 }, p2: { x: 0, y: 0 }, hz: 0,
+      placed: false, drag: null, lock: null,
+    },
     drawing: null,
+    erasing: null,
     arrowDrag: null,
     textDrag: null,
     cropDrag: null,
@@ -116,6 +132,146 @@
     if (cls) n.className = cls;
     if (html != null) n.innerHTML = html;
     return n;
+  }
+
+  /* ---------------------------------------------------------- 方向变换 */
+
+  const T_ID = [1, 0, 0, 1, 0, 0];
+
+  function tApply(T, x, y) {
+    return { x: T[0] * x + T[2] * y + T[4], y: T[1] * x + T[3] * y + T[5] };
+  }
+
+  /* 先应用 B 再应用 A */
+  function tMul(A, B) {
+    return [
+      A[0] * B[0] + A[2] * B[1],
+      A[1] * B[0] + A[3] * B[1],
+      A[0] * B[2] + A[2] * B[3],
+      A[1] * B[2] + A[3] * B[3],
+      A[0] * B[4] + A[2] * B[5] + A[4],
+      A[1] * B[4] + A[3] * B[5] + A[5],
+    ];
+  }
+
+  function tSize(T, w, h) {
+    return {
+      w: Math.abs(T[0]) * w + Math.abs(T[2]) * h,
+      h: Math.abs(T[1]) * w + Math.abs(T[3]) * h,
+    };
+  }
+
+  function tSame(A, B) {
+    for (let i = 0; i < 6; i++) if (A[i] !== B[i]) return false;
+    return true;
+  }
+
+  function tCanvas(src, T, w, h) {
+    const d = tSize(T, w, h);
+    const cv = document.createElement('canvas');
+    cv.width = Math.max(1, Math.round(d.w));
+    cv.height = Math.max(1, Math.round(d.h));
+    const c = cv.getContext('2d');
+    c.imageSmoothingEnabled = true;
+    c.imageSmoothingQuality = 'high';
+    c.setTransform(T[0], T[1], T[2], T[3], T[4], T[5]);
+    c.drawImage(src, 0, 0);
+    return cv;
+  }
+
+  /* 按当前 T 从原图重新生成底图（原图永远不动，所以旋转多少次都不掉画质） */
+  function applyOrient() {
+    if (!S.origSrc) return;
+    const id = tSame(S.T, T_ID);
+    S.src = id ? S.origSrc : tCanvas(S.origSrc, S.T, S.origW, S.origH);
+
+    /* 预览图是缩过的，矩阵的平移量要跟着缩放 */
+    const kv = S.origPvScale;
+    const Tp = [S.T[0], S.T[1], S.T[2], S.T[3], S.T[4] * kv, S.T[5] * kv];
+    S.pv = tSame(S.T, T_ID) ? S.origPv : tCanvas(S.origPv, Tp, S.origPvW, S.origPvH);
+
+    const d = tSize(S.T, S.origW, S.origH);
+    S.W = Math.round(d.w);
+    S.H = Math.round(d.h);
+    const pd = tSize(S.T, S.origPvW, S.origPvH);
+    S.pvW = Math.max(1, Math.round(pd.w));
+    S.pvH = Math.max(1, Math.round(pd.h));
+    S.pvScale = S.pvW / Math.max(1, S.W);
+
+    S.lookCv = null;
+    S.lookCtx = null;
+    S.lookSig = '';
+    dropSharp();
+  }
+
+  /* 一次方向操作：A 是「当前画面坐标」上的变换 */
+  function applyDir(A) {
+    if (!S.doc) return;
+    const W = S.W;
+    const H = S.H;
+
+    for (const st of S.doc.strokes) {
+      if (st.kind === 'arrow') {
+        const p0 = tApply(A, st.x0, st.y0);
+        const p1 = tApply(A, st.x1, st.y1);
+        st.x0 = p0.x; st.y0 = p0.y; st.x1 = p1.x; st.y1 = p1.y;
+      } else {
+        for (const pt of st.pts) {
+          const q = tApply(A, pt.x, pt.y);
+          pt.x = q.x; pt.y = q.y;
+        }
+      }
+    }
+
+    /* 文字保持正立：把它的中心搬过去，再按原尺寸摆回左上角 */
+    for (const t of S.doc.texts) {
+      if (!t.text) { const q0 = tApply(A, t.x, t.y); t.x = q0.x; t.y = q0.y; continue; }
+      const b = textBox(t);
+      const c0 = tApply(A, b.x + b.w / 2, b.y + b.h / 2);
+      t.x = Math.round(c0.x - b.w / 2);
+      t.y = Math.round(c0.y - b.h / 2);
+    }
+
+    const cr = S.doc.crop;
+    const cs = [
+      tApply(A, cr.x, cr.y),
+      tApply(A, cr.x + cr.w, cr.y),
+      tApply(A, cr.x, cr.y + cr.h),
+      tApply(A, cr.x + cr.w, cr.y + cr.h),
+    ];
+    const xs = cs.map((q) => q.x);
+    const ys = cs.map((q) => q.y);
+    const x0 = Math.max(0, Math.round(Math.min.apply(null, xs)));
+    const y0 = Math.max(0, Math.round(Math.min.apply(null, ys)));
+    S.doc.crop = {
+      x: x0,
+      y: y0,
+      w: Math.round(Math.max.apply(null, xs) - x0),
+      h: Math.round(Math.max.apply(null, ys) - y0),
+    };
+
+    S.T = tMul(A, S.T);
+    applyOrient();
+    S.sel = null;
+    S.cropSel = null;
+    fitNow();
+    updateDim();
+    render();
+    pushHistory();
+    setStatus('方向已调整 · 可撤销');
+  }
+
+  function turnDir(sign) {
+    const W = S.W;
+    const H = S.H;
+    /* 顺时针：x' = H - y, y' = x；逆时针反过来 */
+    applyDir(sign > 0 ? [0, 1, -1, 0, H, 0] : [0, -1, 1, 0, 0, W]);
+  }
+
+  function mirrorDir(axis) {
+    const W = S.W;
+    const H = S.H;
+    applyDir(axis === 'h' ? [-1, 0, 0, 1, W, 0] : [1, 0, 0, -1, 0, H]);
   }
 
   function docSize() {
@@ -281,8 +437,12 @@
 
   /* ---------------------------------------------------------- 打开/关闭 */
 
-  function openEditor(item) {
+  let pendingDir = null;
+
+  function openEditor(item, dir) {
     if (S.open || !item || item.kind !== 'image') return;
+    /* 从看图页带着旋转/镜像进来，编辑时保持同样的朝向 */
+    pendingDir = dir && (dir.rot || dir.flipH || dir.flipV) ? dir : null;
     S.open = true;
     S.item = item;
     S.doc = null;
@@ -291,7 +451,7 @@
     S.sel = null;
     S.cropSel = null;
     S.aspect = 0;
-    S.tool = 'crop';
+    S.tool = 'brush';
     S.scale = 1;
     S.panX = 0;
     S.panY = 0;
@@ -330,10 +490,19 @@
   }
 
   function boot(img) {
+    S.T = T_ID.slice();
+    S.origSrc = img;
+    S.origW = img.naturalWidth;
+    S.origH = img.naturalHeight;
     S.src = img;
-    S.W = img.naturalWidth;
-    S.H = img.naturalHeight;
+    S.W = S.origW;
+    S.H = S.origH;
     buildPreview();
+    /* 预览图也留一份干净的，旋转/镜像都从它派生 */
+    S.origPv = S.pv;
+    S.origPvW = S.pvW;
+    S.origPvH = S.pvH;
+    S.origPvScale = S.pvScale;
 
     S.doc = {
       crop: { x: 0, y: 0, w: S.W, h: S.H },
@@ -342,9 +511,25 @@
       texts: [],
     };
     D.dim.textContent = S.W + ' × ' + S.H;
+
+    /* 先把朝向摆成看图页看到的样子，再当作初始状态（不占一步撤销） */
+    if (pendingDir) {
+      const d = pendingDir;
+      pendingDir = null;
+      const turns = ((d.rot || 0) % 4 + 4) % 4;
+      for (let i = 0; i < turns; i++) applyDir([0, 1, -1, 0, S.H, 0]);
+      if (d.flipH) applyDir([-1, 0, 0, 1, S.W, 0]);
+      if (d.flipV) applyDir([1, 0, 0, -1, 0, S.H]);
+      S.hist = [];
+      S.hi = -1;
+      S.sel = null;
+      S.cropSel = null;
+      S.doc.crop = { x: 0, y: 0, w: S.W, h: S.H };
+    }
+
     updateDim();
     fitNow();
-    setTool('crop');
+    setTool('brush');
     render();
     pushHistory(true);
     refreshHist();
@@ -416,6 +601,7 @@
 
   function snapshot() {
     return JSON.stringify({
+      T: S.T,
       crop: S.doc.crop,
       look: S.doc.look,
       strokes: S.doc.strokes,
@@ -439,6 +625,10 @@
 
   function applySnap(snap) {
     const d = JSON.parse(snap);
+    const T = Array.isArray(d.T) ? d.T : T_ID;
+    const changed = !tSame(T, S.T);
+    S.T = T.slice();
+    if (changed) applyOrient();
     S.doc = {
       crop: d.crop,
       /* 老快照里只有 bright（乘性亮度），正好对应新的 look.bright */
@@ -480,8 +670,8 @@
   function fitNow() {
     if (!S.doc) return;
     const { w, h } = docSize();
-    const bw = D.wrap.clientWidth || 1;
-    const bh = D.wrap.clientHeight || 1;
+    const bw = Math.max(1, (D.wrap.clientWidth || 1) - EDIT_SAFE * 2);
+    const bh = Math.max(1, (D.wrap.clientHeight || 1) - EDIT_SAFE * 2);
     S.fit = Math.min(bw / w, bh / h);
     S.scale = Math.min(1, S.fit);
     if (!isFinite(S.scale) || S.scale <= 0) S.scale = 1;
@@ -512,8 +702,8 @@
   function clampPan() {
     if (!S.doc) return;
     const { w, h } = docSize();
-    const bw = D.wrap.clientWidth || 0;
-    const bh = D.wrap.clientHeight || 0;
+    const bw = Math.max(1, (D.wrap.clientWidth || 0) - EDIT_SAFE * 2);
+    const bh = Math.max(1, (D.wrap.clientHeight || 0) - EDIT_SAFE * 2);
     const maxX = Math.max(0, (w * S.scale - bw) / 2);
     const maxY = Math.max(0, (h * S.scale - bh) / 2);
     S.panX = clamp(S.panX, -maxX, maxX);
@@ -579,6 +769,8 @@
     drawStrokes(c, S.doc.strokes);
     drawTexts(c, S.doc.texts, true);
     c.restore();
+
+    if (S.persp.mode) syncPersp();
 
     syncCropUI();
     D.zoomPct.textContent = Math.round(S.scale * 100) + '%';
@@ -715,16 +907,22 @@
 
   function setTool(name) {
     S.tool = name;
+    // 进裁剪就有框：默认给整幅，直接拖手柄往里收，比先划一个框直观
+    if (name === 'crop' && !S.cropSel && S.W && S.H) {
+      S.cropSel = { x: 0, y: 0, w: S.W, h: S.H };
+    }
     [...D.tools.querySelectorAll('.ed-tool')].forEach((b) => {
       b.classList.toggle('on', b.dataset.tool === name);
     });
     D.crop.hidden = name !== 'crop';
-    D.cv.style.cursor = name === 'brush' || name === 'arrow' ? 'crosshair'
+    D.cv.style.cursor = name === 'brush' || name === 'arrow' || name === 'eraser' ? 'crosshair'
       : name === 'text' ? 'text' : 'default';
+    if (name !== 'eraser') { S.erasing = null; liveReset(); }
     if (name !== 'crop') S.cropSel = null;
     if (name !== 'text') S.sel = null;
     buildSide();
     render();
+    syncPersp();
   }
 
   /* ---------------------------------------------------------- 侧栏 */
@@ -777,7 +975,15 @@
             '<button class="ed-line-btn" id="edCropAll">全选</button>' +
             '<button class="ed-line-btn" id="edCropApply">应用裁剪</button>' +
           '</div>' +
-          '<p class="ed-tip">在画面上拖出要保留的区域，可用手柄微调；双击画面恢复整幅。</p>' +
+          '<p class="ed-tip">框已经按整幅摆好，拖四角或边往里收即可；在框外拖一下可以重新框选，双击画面恢复整幅。</p>' +
+        '</div>';
+    } else if (t === 'eraser') {
+      html +=
+        '<div class="ed-sec">' +
+          '<h4 class="ed-sec-h">橡皮大小</h4>' +
+          '<div class="ed-row"><span>直径</span><span class="v" id="edEraserSizeV">' + S.eraser.size + ' px</span></div>' +
+          '<input class="ed-slider" id="edEraserSize" type="range" min="10" max="180" step="2" value="' + S.eraser.size + '">' +
+          '<p class="ed-tip">擦的是标注，不动照片：划过一条线会把它截断，箭头和文字整块删掉。擦错了按 Ctrl+Z 撤销。</p>' +
         '</div>';
     } else if (t === 'light') {
       const l = S.doc.look;
@@ -821,6 +1027,22 @@
           '<h4 class="ed-sec-h">粗细</h4>' +
           '<div class="ed-row"><span>线宽</span><span class="v" id="edBrushSizeV">' + S.brush.size + ' px</span></div>' +
           '<input class="ed-slider" id="edBrushSize" type="range" min="1" max="60" step="1" value="' + S.brush.size + '">' +
+        '</div>' +
+        '<div class="ed-sec">' +
+          '<h4 class="ed-sec-h">透视尺</h4>' +
+          '<div class="ed-seg" id="edPerspMode">' +
+            '<button data-pm="0" class="' + (S.persp.mode === 0 ? 'on' : '') + '">关</button>' +
+            '<button data-pm="1" class="' + (S.persp.mode === 1 ? 'on' : '') + '">一点</button>' +
+            '<button data-pm="2" class="' + (S.persp.mode === 2 ? 'on' : '') + '">两点</button>' +
+          '</div>' +
+          (S.persp.mode
+            ? '<p class="ed-tip">画面上的 1 / 2 就是消失点，直接拖到你要的位置。' +
+              '每一笔会自己贴到方向最接近的那条线上——两条透视、一条横线（地平线）、一条竖线，' +
+              '所以画出来天然符合透视。</p>' +
+              '<button class="ed-line-btn" id="edPerspReset" style="margin-top:10px">消失点归位</button>'
+            : '<p class="ed-tip">打开后每一笔都会被一条透视线管住，画背景的梁、地砖、柜体分缝时不用再对着消失点描。</p>') +
+        '</div>' +
+        '<div class="ed-sec">' +
           '<p class="ed-tip">按住左键绘制；右键或空格拖动平移画面，不影响已画内容。</p>' +
         '</div>';
     } else if (t === 'arrow') {
@@ -877,6 +1099,26 @@
           ? '<div class="ed-sec"><button class="ed-line-btn warn" id="edTextDel">删除这段文字</button></div>'
           : '<div class="ed-sec"><p class="ed-tip">在画面上单击添加文字，拖动可移动位置；选中后按 Delete 删除。</p></div>');
     }
+
+    html +=
+      '<div class="ed-sec">' +
+        '<h4 class="ed-sec-h">方向</h4>' +
+        '<div class="ed-dirs">' +
+          '<button class="ed-dir" data-dir="ccw" title="逆时针 90°  Shift+R">' +
+            '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M4 8h9a5 5 0 0 1 0 10H8"/><path d="M8 4 4 8l4 4"/></svg>' +
+          '</button>' +
+          '<button class="ed-dir" data-dir="cw" title="顺时针 90°  R">' +
+            '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M20 8h-9a5 5 0 0 0 0 10h5"/><path d="M16 4l4 4-4 4"/></svg>' +
+          '</button>' +
+          '<button class="ed-dir" data-dir="h" title="左右镜像  M">' +
+            '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v18" stroke-dasharray="2.5 3"/><path d="M8 7 3 12l5 5V7Z"/><path d="M16 7l5 5-5 5V7Z"/></svg>' +
+          '</button>' +
+          '<button class="ed-dir" data-dir="v" title="上下镜像  Shift+M">' +
+            '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12h18" stroke-dasharray="2.5 3"/><path d="M7 8 12 3l5 5H7Z"/><path d="M7 16l5 5 5-5H7Z"/></svg>' +
+          '</button>' +
+        '</div>' +
+        '<p class="ed-tip">旋转的是整张画：照片、标注、裁剪框一起转；文字会跟着挪位置但保持正立。原图不做任何修改。</p>' +
+      '</div>';
 
     D.side.innerHTML = html;
   }
@@ -1097,14 +1339,168 @@
 
   /* ---------------------------------------------------------- 画笔 */
 
+  /* 指针捕获：合成事件（自检用）没有真实指针，捕获失败也不该让工具失效 */
+  function capture(e) {
+    try { D.cv.setPointerCapture(e.pointerId); } catch (err) { /* ignore */ }
+  }
+
+  function release(e) {
+    try {
+      release(e);
+    } catch (err) { /* ignore */ }
+  }
+
+  /* ---------------------------------------------------------- 透视尺 */
+
+  const PERSP_HIT = 18;      // 抓消失点的半径（屏幕像素）
+  const PERSP_DIR_MIN = 14;  // 移动多少像素后才判定「这笔锁哪条线」
+
+  function perspInit() {
+    const p = S.persp;
+    if (p.placed || !S.W || !S.H) return;
+    /* 两个消失点共用一条地平线：拖动任何一个，横线跟着一起动 */
+    p.hz = S.H * 0.46;
+    p.p1 = { x: S.W * 0.5, y: p.hz };
+    p.p2 = { x: S.W * 0.82, y: p.hz };
+    p.placed = true;
+  }
+
+  function perspSetY(y) {
+    S.persp.hz = y;
+    S.persp.p1.y = y;
+    S.persp.p2.y = y;
+  }
+
+  function setPerspMode(m) {
+    S.persp.mode = m | 0;
+    S.persp.lock = null;
+    S.persp.drag = null;
+    if (S.persp.mode) perspInit();
+    buildSide();
+    syncPersp();
+  }
+
+  /* 消失点命中：只在透视尺打开、手绘工具下生效 */
+  function perspHit(vp) {
+    const p = S.persp;
+    if (!p.mode || S.tool !== 'brush') return null;
+    const near = (q) => Math.hypot(q.x - vp.x, q.y - vp.y) * S.scale <= PERSP_HIT;
+    if (p.mode >= 2 && near(p.p2)) return 'p2';
+    if (near(p.p1)) return 'p1';
+    return null;
+  }
+
+  /* 这一笔锁在哪条线上：p1 / p2 / 'v'（竖直线） 里挑方向最接近的 */
+  function perspPick(ax, ay, dx, dy) {
+    const p = S.persp;
+    const cands = [{ k: 'p1', x: p.p1.x - ax, y: p.p1.y - ay }];
+    if (p.mode >= 2) cands.push({ k: 'p2', x: p.p2.x - ax, y: p.p2.y - ay });
+    cands.push({ k: 'v', x: 0, y: 1 });
+    /* 平等于画面的横线：两点透视里没有消失点能吃住它，得单独给一条 */
+    cands.push({ k: 'h', x: 1, y: 0 });
+
+    let best = null;
+    let bestA = Infinity;
+    for (const c of cands) {
+      const len = Math.hypot(c.x, c.y);
+      if (len < 1e-6) continue;
+      /* 线没有正反：往回拉和往外推都算同一条 */
+      let cos = (dx * c.x + dy * c.y) / (len * Math.hypot(dx, dy) || 1);
+      cos = Math.abs(cos);
+      const ang = Math.acos(clamp(cos, -1, 1));
+      if (ang < bestA) { bestA = ang; best = c; }
+    }
+    return best ? best.k : null;
+  }
+
+  /* 把点吸附到「过 anchor、朝 lock 方向」的那条线上 */
+  function perspSnap(lock, ax, ay, x, y) {
+    const p = S.persp;
+    let ux = 0, uy = 1;
+    if (lock === 'p1') { ux = p.p1.x - ax; uy = p.p1.y - ay; }
+    else if (lock === 'p2') { ux = p.p2.x - ax; uy = p.p2.y - ay; }
+    else if (lock === 'h') { ux = 1; uy = 0; }
+    const len = Math.hypot(ux, uy);
+    if (len < 1e-6) return { x, y };
+    ux /= len; uy /= len;
+    const t = (x - ax) * ux + (y - ay) * uy;
+    return { x: ax + ux * t, y: ay + uy * t };
+  }
+
+  /* 画指引线：消失点、地平线、当前这笔锁定的那条线 */
+  function syncPersp() {
+    const p = S.persp;
+    const svg = D.persp;
+    if (!svg) return;
+    const on = !!p.mode && S.tool === 'brush' && !S.doc?.crop ? false : !!p.mode && S.tool === 'brush';
+    if (!on || !S.doc || !S.W) { svg.setAttribute('hidden', ''); return; }
+    svg.removeAttribute('hidden');
+
+    const crop = S.doc.crop;
+    svg.setAttribute('viewBox', crop.x + ' ' + crop.y + ' ' + crop.w + ' ' + crop.h);
+    const k = 1 / Math.max(0.05, S.scale);   // 让线和点在任何缩放下都是同一个屏幕粗细
+    const r = 10 * k;
+
+    const v1 = D.perspV1, v2 = D.perspV2;
+    v1.setAttribute('cx', p.p1.x); v1.setAttribute('cy', p.p1.y); v1.setAttribute('r', r);
+    v2.setAttribute('cx', p.p2.x); v2.setAttribute('cy', p.p2.y); v2.setAttribute('r', r);
+    v2.style.display = p.mode >= 2 ? '' : 'none';
+    D.perspTag1.setAttribute('x', p.p1.x + 13 * k);
+    D.perspTag1.setAttribute('y', p.p1.y - 11 * k);
+    D.perspTag1.style.fontSize = 13 * k + 'px';
+    D.perspTag1.style.display = '';
+    D.perspTag2.setAttribute('x', p.p2.x + 13 * k);
+    D.perspTag2.setAttribute('y', p.p2.y - 11 * k);
+    D.perspTag2.style.fontSize = 13 * k + 'px';
+    D.perspTag2.style.display = p.mode >= 2 ? '' : 'none';
+
+    /* 地平线：整幅横穿的一条，两个消失点都挂在它上面 */
+    const hx0 = crop.x - crop.w * 0.2;
+    const hx1 = crop.x + crop.w * 1.2;
+    D.perspHorizon.setAttribute('x1', hx0); D.perspHorizon.setAttribute('y1', p.hz);
+    D.perspHorizon.setAttribute('x2', hx1); D.perspHorizon.setAttribute('y2', p.hz);
+    D.perspHorizon.style.display = '';
+
+    /* 正在画的这条线：从消失点一路铺到画面外，提示「就这一条」 */
+    const lock = p.lock;
+    const anchor = p.anchor;
+    const far = Math.hypot(S.W, S.H) * 3;
+    const rays = [D.perspRay1, D.perspRay2];
+    rays.forEach((ln) => ln.style.display = 'none');
+    if (lock && anchor) {
+      let ux, uy;
+      if (lock === 'v') { ux = 0; uy = 1; }
+      else if (lock === 'h') { ux = 1; uy = 0; }
+      else {
+        const q = lock === 'p2' ? p.p2 : p.p1;
+        ux = q.x - anchor.x; uy = q.y - anchor.y;
+      }
+      const len = Math.hypot(ux, uy) || 1;
+      ux /= len; uy /= len;
+      const ln = rays[0];
+      ln.setAttribute('x1', anchor.x - ux * far);
+      ln.setAttribute('y1', anchor.y - uy * far);
+      ln.setAttribute('x2', anchor.x + ux * far);
+      ln.setAttribute('y2', anchor.y + uy * far);
+      ln.style.display = '';
+    }
+  }
+
   function brushDown(e) {
     const vp = toView(e);
     S.drawing = {
       color: S.brush.color,
       size: S.brush.size,
       pts: [{ x: vp.x, y: vp.y }],
+      /* 透视尺打开时，这一笔先不定方向，等手移动一段再判断锁哪条线 */
+      persp: S.persp.mode ? { ax: vp.x, ay: vp.y, lock: null } : null,
     };
+    if (S.drawing.persp) {
+      S.persp.lock = null;
+      S.persp.anchor = { x: vp.x, y: vp.y };
+    }
     liveReset();
+    syncPersp();
     liveDot(vp.x, vp.y, S.brush.size, S.brush.color);
     liveSegment(vp.x, vp.y, vp.x + 0.01, vp.y, S.brush.size, S.brush.color);
   }
@@ -1115,8 +1511,24 @@
     const evs = e.getCoalescedEvents ? e.getCoalescedEvents() : [e];
     const list = evs && evs.length ? evs : [e];
     for (let i = 0; i < list.length; i++) {
-      const vp = toView(list[i]);
+      let vp = toView(list[i]);
       const last = g.pts[g.pts.length - 1];
+
+      if (g.persp) {
+        const px = vp.x - g.persp.ax;
+        const py = vp.y - g.persp.ay;
+        if (!g.persp.lock) {
+          if (Math.hypot(px, py) * S.scale >= PERSP_DIR_MIN) {
+            g.persp.lock = perspPick(g.persp.ax, g.persp.ay, px, py);
+            S.persp.lock = g.persp.lock;
+            syncPersp();
+          } else {
+            continue;
+          }
+        }
+        if (g.persp.lock) vp = perspSnap(g.persp.lock, g.persp.ax, g.persp.ay, vp.x, vp.y);
+      }
+
       const dx = vp.x - last.x;
       const dy = vp.y - last.y;
       if (dx * dx + dy * dy < 0.5) continue;
@@ -1128,6 +1540,8 @@
   function brushUp() {
     const g = S.drawing;
     S.drawing = null;
+    S.persp.lock = null;
+    syncPersp();
     if (!g) return;
     if (g.pts.length < 1) return;
     S.doc.strokes.push(g);
@@ -1168,6 +1582,129 @@
     c.moveTo(x0, y0);
     c.lineTo(x1, y1);
     c.stroke();
+  }
+
+  /* ---------------------------------------------------------- 橡皮
+     擦的是「标注」而不是照片：划过一笔就把这笔画断，断成两截各自还是一条线；
+     箭头整条删掉，文字整块删掉。全部可撤销，底层照片一点不动。 */
+
+  function segDist(px, py, x0, y0, x1, y1) {
+    const dx = x1 - x0;
+    const dy = y1 - y0;
+    const l2 = dx * dx + dy * dy;
+    if (l2 < 1e-6) return Math.hypot(px - x0, py - y0);
+    let t = ((px - x0) * dx + (py - y0) * dy) / l2;
+    t = clamp(t, 0, 1);
+    return Math.hypot(px - (x0 + t * dx), py - (y0 + t * dy));
+  }
+
+  /* 返回 null＝没碰到；返回数组＝被切断后剩下的几段（空数组＝整笔擦干净） */
+  function splitStroke(st, x, y, r) {
+    const tol = r + (st.size || 1) / 2;
+    let touched = false;
+    const runs = [];
+    let cur = [];
+    for (const p of st.pts) {
+      if (Math.hypot(p.x - x, p.y - y) <= tol) {
+        touched = true;
+        if (cur.length > 1) runs.push(cur);
+        cur = [];
+      } else {
+        cur.push(p);
+      }
+    }
+    if (!touched) return null;
+    if (cur.length > 1) runs.push(cur);
+    return runs;
+  }
+
+  function eraseAt(x, y) {
+    const r = Math.max(3, S.eraser.size / 2);
+    const keep = [];
+    let changed = false;
+
+    for (const st of S.doc.strokes) {
+      if (st.kind === 'arrow') {
+        if (segDist(x, y, st.x0, st.y0, st.x1, st.y1) <= r + st.size / 2) {
+          changed = true;
+          continue;
+        }
+        keep.push(st);
+        continue;
+      }
+      const runs = splitStroke(st, x, y, r);
+      if (!runs) {
+        keep.push(st);
+        continue;
+      }
+      changed = true;
+      for (const pts of runs) keep.push({ ...st, pts });
+    }
+
+    if (changed) S.doc.strokes = keep;
+
+    const texts = S.doc.texts.filter((t) => {
+      const b = textBox(t);
+      const hit = x >= b.x - r && x <= b.x + b.w + r && y >= b.y - r && y <= b.y + b.h + r;
+      if (hit) changed = true;
+      return !hit;
+    });
+    if (texts.length !== S.doc.texts.length) S.doc.texts = texts;
+
+    if (changed) scheduleRender();
+    return changed;
+  }
+
+  /* 擦的过程中画个圈，告诉用户擦头多大 */
+  function eraseRing(x, y) {
+    const r = Math.max(3, S.eraser.size / 2);
+    const c = liveCtx();
+    c.save();
+    c.beginPath();
+    c.arc(x, y, r, 0, TAU);
+    c.strokeStyle = 'rgba(0,0,0,.5)';
+    c.lineWidth = 3 / Math.max(0.05, S.scale);
+    c.stroke();
+    c.strokeStyle = 'rgba(255,255,255,.95)';
+    c.lineWidth = 1.5 / Math.max(0.05, S.scale);
+    c.stroke();
+    c.restore();
+  }
+
+  function eraserDown(e) {
+    const vp = toView(e);
+    S.erasing = { last: { x: vp.x, y: vp.y }, changed: false };
+    liveReset();
+    if (eraseAt(vp.x, vp.y)) S.erasing.changed = true;
+    eraseRing(vp.x, vp.y);
+  }
+
+  function eraserMove(e) {
+    const g = S.erasing;
+    const vp = toView(e);
+    liveReset();
+    if (!g) {
+      eraseRing(vp.x, vp.y);
+      return;
+    }
+    /* 手快的时候两点之间会跳，按擦头半径插值补上 */
+    const r = Math.max(3, S.eraser.size / 2);
+    const dx = vp.x - g.last.x;
+    const dy = vp.y - g.last.y;
+    const steps = Math.max(1, Math.ceil(Math.hypot(dx, dy) / Math.max(2, r * 0.7)));
+    for (let i = 1; i <= steps; i++) {
+      const t = i / steps;
+      if (eraseAt(g.last.x + dx * t, g.last.y + dy * t)) g.changed = true;
+    }
+    g.last = { x: vp.x, y: vp.y };
+    eraseRing(vp.x, vp.y);
+  }
+
+  function eraserUp() {
+    const g = S.erasing;
+    S.erasing = null;
+    liveReset();
+    if (g && g.changed) pushHistory();
   }
 
   /* ---------------------------------------------------------- 箭头 */
@@ -1265,14 +1802,26 @@
     const vp = toView(e);
 
     if (S.tool === 'brush') {
+      const grab = perspHit(vp);
+      if (grab) {
+        S.persp.drag = grab;
+        capture(e);
+        return;
+      }
       brushDown(e);
-      D.cv.setPointerCapture(e.pointerId);
+      capture(e);
+      return;
+    }
+
+    if (S.tool === 'eraser') {
+      eraserDown(e);
+      capture(e);
       return;
     }
 
     if (S.tool === 'arrow') {
       arrowDown(e);
-      D.cv.setPointerCapture(e.pointerId);
+      capture(e);
       return;
     }
 
@@ -1283,7 +1832,7 @@
         S.textDrag = { id: hit.id, dx: vp.x - hit.x, dy: vp.y - hit.y, moved: false };
         render();
         buildSide();
-        D.cv.setPointerCapture(e.pointerId);
+        capture(e);
       } else {
         addText(vp);
       }
@@ -1292,6 +1841,10 @@
   }
 
   function onMove(e) {
+    /* 悬在消失点上就换成抓手，否则还是十字 */
+    if (!S.panning && !S.drawing && S.tool === 'brush' && S.persp.mode) {
+      D.cv.style.cursor = perspHit(toView(e)) ? 'grab' : 'crosshair';
+    }
     if (S.panning) {
       S.panX = S.panning.sx + (e.clientX - S.panning.cx);
       S.panY = S.panning.sy + (e.clientY - S.panning.cy);
@@ -1299,8 +1852,22 @@
       render();
       return;
     }
+    if (S.persp.drag) {
+      D.cv.style.cursor = 'grabbing';
+      const vp = toView(e);
+      const q = S.persp[S.persp.drag];
+      /* 允许拖到画面外，那里才是多数透视的消失点 */
+      q.x = clamp(vp.x, -S.W, S.W * 2);
+      perspSetY(clamp(vp.y, -S.H * 0.5, S.H * 1.5));
+      syncPersp();
+      return;
+    }
     if (S.drawing) {
       brushMove(e);
+      return;
+    }
+    if (S.tool === 'eraser' && !S.panning) {
+      eraserMove(e);
       return;
     }
     if (S.arrowDrag) {
@@ -1319,6 +1886,12 @@
   }
 
   function onUp(e) {
+    if (S.persp.drag) {
+      S.persp.drag = null;
+      D.cv.style.cursor = 'grab';
+      release(e);
+      return;
+    }
     if (S.panning) {
       S.panning = null;
       D.wrap.classList.remove('panning');
@@ -1326,24 +1899,23 @@
     }
     if (S.drawing) {
       brushUp();
-      if (e && D.cv.hasPointerCapture && D.cv.hasPointerCapture(e.pointerId)) {
-        D.cv.releasePointerCapture(e.pointerId);
-      }
+      release(e);
+      return;
+    }
+    if (S.tool === 'eraser') {
+      eraserUp();
+      release(e);
       return;
     }
     if (S.arrowDrag) {
       arrowUp();
-      if (e && D.cv.hasPointerCapture && D.cv.hasPointerCapture(e.pointerId)) {
-        D.cv.releasePointerCapture(e.pointerId);
-      }
+      release(e);
       return;
     }
     if (S.textDrag) {
       if (S.textDrag.moved) pushHistory();
       S.textDrag = null;
-      if (e && D.cv.hasPointerCapture && D.cv.hasPointerCapture(e.pointerId)) {
-        D.cv.releasePointerCapture(e.pointerId);
-      }
+      release(e);
     }
   }
 
@@ -1368,6 +1940,25 @@
   function onSideClick(e) {
     const btn = e.target.closest('button');
     if (!btn) return;
+
+    if (btn.dataset.dir != null) {
+      const dir = btn.dataset.dir;
+      if (dir === 'cw') turnDir(1);
+      else if (dir === 'ccw') turnDir(-1);
+      else mirrorDir(dir);
+      return;
+    }
+    if (btn.dataset.pm != null) {
+      setPerspMode(+btn.dataset.pm);
+      return;
+    }
+    if (btn.id === 'edPerspReset') {
+      S.persp.placed = false;
+      perspInit();
+      syncPersp();
+      setStatus('消失点已归位');
+      return;
+    }
 
     if (btn.dataset.lookReset) {
       resetLook(btn.dataset.lookReset);
@@ -1474,6 +2065,13 @@
   }
 
   function onSideInput(e) {
+    if (e.target.id === 'edEraserSize') {
+      S.eraser.size = +e.target.value;
+      const v = document.getElementById('edEraserSizeV');
+      if (v) v.textContent = S.eraser.size + ' px';
+      return;
+    }
+
     const id = e.target.id;
 
     /* 影调五项：同一个处理器，靠 data-look 区分 */
@@ -1807,6 +2405,9 @@
     if (k === 'c') return setTool('crop');
     if (k === 'l') return setTool('light');
     if (k === 'b') return setTool('brush');
+    if (k === 'e') return setTool('eraser');
+    if (k === 'r') return turnDir(e.shiftKey ? -1 : 1);
+    if (k === 'm') return mirrorDir(e.shiftKey ? 'v' : 'h');
     if (k === 'a') return setTool('arrow');
     if (k === 'v') return setTool('text');
     if (k === '0') {
@@ -1820,6 +2421,8 @@
         S.arrow.size = clamp(S.arrow.size + (up ? 1 : -1), 1, 40);
       } else if (S.tool === 'brush') {
         S.brush.size = clamp(S.brush.size + (up ? 2 : -2), 1, 60);
+      } else if (S.tool === 'eraser') {
+        S.eraser.size = clamp(S.eraser.size + (up ? 6 : -6), 10, 180);
       } else {
         return;
       }
@@ -1845,6 +2448,14 @@
     D.box = document.getElementById('edBox');
     D.cv = document.getElementById('edCanvas');
     D.live = document.getElementById('edLive');
+    D.persp = document.getElementById('edPersp');
+    D.perspHorizon = document.getElementById('edPerspHorizon');
+    D.perspRay1 = document.getElementById('edPerspRay1');
+    D.perspRay2 = document.getElementById('edPerspRay2');
+    D.perspV1 = document.getElementById('edPerspV1');
+    D.perspV2 = document.getElementById('edPerspV2');
+    D.perspTag1 = document.getElementById('edPerspTag1');
+    D.perspTag2 = document.getElementById('edPerspTag2');
     D.crop = document.getElementById('edCrop');
     D.cropBox = document.getElementById('edCropBox');
     D.cropTag = document.getElementById('edCropTag');
@@ -1918,7 +2529,8 @@
     D.cv.addEventListener('contextmenu', (e) => e.preventDefault());
     D.cv.addEventListener('dblclick', () => {
       if (S.tool === 'crop') {
-        S.cropSel = null;
+        /* 双击回到整幅，而不是把框清掉——框一直都在，只是大小变了 */
+        S.cropSel = S.W && S.H ? { x: 0, y: 0, w: S.W, h: S.H } : null;
         syncCropUI();
       } else if (S.tool === 'text') {
         const cur = currentText();

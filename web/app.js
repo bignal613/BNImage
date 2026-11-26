@@ -1,11 +1,11 @@
-﻿/* BNImage · 统一查看器 —— 前端逻辑
+/* BNImage · 统一查看器 —— 前端逻辑
    只读浏览：网格 → 单张 / 视频 / PDF / HTML
    ------------------------------------------------------------------ */
 
 const $ = (s) => document.querySelector(s);
 
 /* 版本号只在这里写一次；关于面板里两处都引用它 */
-const APP_VER = '2.2';
+const APP_VER = '2.5';
 
 const el = {
   bar: $('#bar'),
@@ -16,6 +16,12 @@ const el = {
   viewer: $('#viewer'),
   stage: $('#viewerStage'),
   info: $('#viewerInfo'),
+  btnRotate: $('#btnRotate'),
+  viewTools: $('#viewTools'),
+  vpRotL: $('#vpRotL'),
+  vpRotR: $('#vpRotR'),
+  vpFlipH: $('#vpFlipH'),
+  vpFlipV: $('#vpFlipV'),
   close: $('#btnClose'),
   prev: $('#navPrev'),
   next: $('#navNext'),
@@ -31,6 +37,13 @@ const el = {
   zoomFit: $('#zbFit'),
   zoomOne: $('#zbOne'),
   edit: $('#zbEdit'),
+  detail: $('#detail'),
+  detailName: $('#detailName'),
+  detailKind: $('#detailKind'),
+  detailBody: $('#detailBody'),
+  detailClose: $('#detailClose'),
+  detailOpen: $('#detailOpen'),
+  detailReveal: $('#detailReveal'),
 };
 
 const state = {
@@ -112,6 +125,11 @@ function thumbUrl(item, w = 380) {
   return `/api/thumb?path=${encodeURIComponent(item.path)}&w=${w}${item.rev ? '&r=' + item.rev : ''}`;
 }
 
+/* PDF / AI 封面：服务端把第一页画成图（PyMuPDF），格子里直接显示 */
+function pdfUrl(item, w = 420) {
+  return `/api/pdfthumb?path=${encodeURIComponent(item.path)}&w=${w}${item.rev ? '&r=' + item.rev : ''}`;
+}
+
 /* 视频封面：服务端用 ffmpeg 抓帧，浏览器只负责显示这张图 */
 function vframeUrl(item, w = 420) {
   return `/api/vframe?path=${encodeURIComponent(item.path)}&w=${w}${item.rev ? '&r=' + item.rev : ''}`;
@@ -119,9 +137,6 @@ function vframeUrl(item, w = 420) {
 
 /* SketchUp 模型：服务端从 .skp（本身就是 zip）里取出 SketchUp 存的预览图。
    原图固定 256px，w 再大也只会变糊，所以两处都只请求 512。 */
-function suUrl(item, w = 512) {
-  return `/api/su?path=${encodeURIComponent(item.path)}&w=${w}${item.rev ? '&r=' + item.rev : ''}`;
-}
 
 function renderUrl(item, w = 2560, rev) {
   const r = rev || item.rev;
@@ -165,10 +180,6 @@ const ICON = {
   image: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3.3" y="5.2" width="17.4" height="13.6" rx="2.6"/><circle cx="8.6" cy="10" r="1.5"/><path d="M4.2 17.4 9.5 12l3.4 3.3 2.4-2.3 4.3 4.1"/></svg>`,
   video: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3.3" y="5.2" width="17.4" height="13.6" rx="2.6"/><path d="m10.3 9.2 4.7 2.8-4.7 2.8V9.2Z"/></svg>`,
   drive: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3.3" y="6" width="17.4" height="12" rx="2.6"/><path d="M3.3 12.8h17.4"/><circle cx="6.9" cy="15.4" r=".9" fill="currentColor" stroke="none"/></svg>`,
-  su: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3.3 19.9 7.6v8.8L12 20.7 4.1 16.4V7.6Z"/><path d="M4.1 7.6 12 12l7.9-4.4M12 12v8.7"/></svg>`,
-  docx: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M6.5 3.6h6.2c.3 0 .6.12.82.34l3.6 3.6c.22.22.34.52.34.82v11.1c0 .9-.72 1.6-1.62 1.6H6.5c-.9 0-1.62-.7-1.62-1.6V5.2c0-.9.72-1.6 1.62-1.6Z"/><path d="M12.9 3.9v3.4c0 .72.58 1.3 1.3 1.3h3.3"/><path d="M8 12.4h8M8 15h8M8 17.6h5"/></svg>`,
-  xlsx: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3.6" y="4.4" width="16.8" height="15.2" rx="2.6"/><path d="M3.6 9.4h16.8M3.6 14.4h16.8M9.4 9.4v10.2M14.6 9.4v10.2"/></svg>`,
-  pptx: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3.4" y="4.9" width="17.2" height="11.6" rx="2.6"/><path d="M12 16.5v3.2M8.6 20h6.8"/><path d="M8.6 12.9v-3M12 12.9V9.4M15.4 12.9V7.9" stroke-width="1.9"/></svg>`,
 };
 
 /* ------------------------------------------------------------ 主题 */
@@ -380,7 +391,6 @@ function renderGrid(data, opts = {}) {
    图片/视频/文档都走这一套，缩略图还没回来时 .pulse 给一层扫光骨架。 */
 function makeCell(item) {
   const cell = document.createElement('div');
-  cell.title = item.name;
 
   if (item.kind === 'dir') {
     cell.className = 'cell folder';
@@ -395,12 +405,11 @@ function makeCell(item) {
   cell.appendChild(thumb);
   appendCap(cell, item.name);
 
-  if (item.kind === 'image' || item.kind === 'video' || item.kind === 'su') {
+  if (item.kind === 'image' || item.kind === 'video') {
     /* 视频封面走服务端抓帧（ffmpeg），不再塞 <video>：
        WebView2 里 preload=metadata 不解首帧、#t= 也时常不生效，格子里就是空白。 */
     const video = item.kind === 'video';
-    const su = item.kind === 'su';
-    cell.className = 'cell pulse' + (video ? ' video' : '') + (su ? ' su' : '');
+    cell.className = 'cell pulse' + (video ? ' video' : '');
     const img = document.createElement('img');
     img.alt = item.name;
     img.loading = 'lazy';
@@ -410,7 +419,7 @@ function makeCell(item) {
       cell.classList.remove('pulse');
       img.remove();
       cell.classList.add('tile');
-      thumb.innerHTML = `<div class="glyph">${video ? ICON.video : su ? ICON.su : ICON.image}</div>`;
+      thumb.innerHTML = `<div class="glyph">${video ? ICON.video : ICON.image}</div>`;
     };
     thumb.appendChild(img);
     if (video) {
@@ -418,13 +427,7 @@ function makeCell(item) {
       badge.className = 'vbadge';
       badge.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 7.2 16.6 12 9 16.8V7.2Z"/></svg>';
       thumb.appendChild(badge);
-    }
-    if (su) {
-      const badge = document.createElement('span');
-      badge.className = 'sbadge';
-      badge.textContent = 'SU';
-      badge.title = 'SketchUp 模型预览（上次保存时的视角）';
-      thumb.appendChild(badge);
+      addTypeBadge(thumb, item);
     }
     cell._item = item;
     cell._media = img;
@@ -433,12 +436,37 @@ function makeCell(item) {
     return cell;
   }
 
-  // 相机 RAW / PDF / HTML / AI / Office：不给位图，直接出图标
+  if (item.kind === 'pdf') {
+    /* 第一页画成图：白底纸面，和照片放在一起也不突兀 */
+    cell.className = 'cell pulse doctile';
+    const img = document.createElement('img');
+    img.alt = item.name;
+    img.loading = 'lazy';
+    img.decoding = 'async';
+    img.onload = () => { cell.classList.remove('pulse'); img.classList.add('ready'); };
+    img.onerror = () => {
+      cell.classList.remove('pulse', 'doctile');
+      img.remove();
+      cell.classList.add('tile');
+      thumb.innerHTML = `<div class="glyph">${ICON.pdf}</div>`;
+      addTypeBadge(thumb, item);
+    };
+    thumb.appendChild(img);
+    addTypeBadge(thumb, item);
+    cell._item = item;
+    cell._media = img;
+    cell.onclick = () => openViewer(item);
+    observer.observe(cell);
+    return cell;
+  }
+
+  // 相机 RAW / HTML：不给位图，直接出图标
   cell.className = 'cell tile';
   const icon = item.kind === 'raw' ? ICON.image
     : item.kind === 'pdf' ? ICON.pdf
     : ICON[item.kind] || ICON.html;
   thumb.innerHTML = `<div class="glyph">${icon}</div>`;
+  addTypeBadge(thumb, item);
   cell._item = item;
   cell.onclick = () => openViewer(item);
   return cell;
@@ -453,6 +481,24 @@ function fileCaption(name) {
   const base = dot > 0 ? name.slice(0, dot) : name;
   if (base.length <= 16) return name;
   return base.slice(0, 9) + '…' + base.slice(-6) + ext;
+}
+
+/* 右下角的格式角标：图片不给（看图时不关心格式），其余都给一个短标签 */
+function typeLabel(item) {
+  if (item.kind === 'raw') return '';
+  if (item.kind === 'pdf') return 'PDF';
+  if (item.kind === 'html') return 'HTML';
+  if (item.kind === 'video') return (item.ext || '').toUpperCase().slice(0, 4) || 'VIDEO';
+  return '';
+}
+
+function addTypeBadge(thumb, item) {
+  const label = typeLabel(item);
+  if (!label) return;
+  const b = document.createElement('span');
+  b.className = 'tbadge';
+  b.textContent = label;
+  thumb.appendChild(b);
 }
 
 function appendCap(cell, name) {
@@ -473,8 +519,8 @@ function attachMedia(node, item) {
     media.src = item.native ? fsUrl(item.path) : thumbUrl(item, 420);
   } else if (item.kind === 'video') {
     media.src = vframeUrl(item, 420);
-  } else if (item.kind === 'su') {
-    media.src = suUrl(item, 512);
+  } else if (item.kind === 'pdf') {
+    media.src = pdfUrl(item, 420);
   }
 }
 
@@ -624,6 +670,8 @@ function openViewer(item) {
   markLastCell(null);
   pendingFly = item.kind === 'image' ? cellForPath(item.path) : null;
   el.viewer.hidden = false;
+  resetView();
+  hideDetail();
   document.body.classList.add('in-viewer');
   renderViewer();
   syncViewChrome();
@@ -660,6 +708,9 @@ function closeViewer(silent = false) {
   infoHide();
   el.zoomBar.hidden = true;
   el.edit.hidden = true;
+  el.viewTools.hidden = true;
+  if (el.btnRotate) el.btnRotate.classList.add('away');
+  hideDetail();
   zoomEl = null;
   currentItem = null;
   resetZoomState();
@@ -685,6 +736,7 @@ function restoreViewerFromMemo() {
   pendingView = m;
   viewMemo = null;
   el.viewer.hidden = false;
+  hideDetail();
   document.body.classList.add('in-viewer');
   renderViewer();
   el.grid.scrollTop = m.scrollTop;
@@ -728,6 +780,7 @@ function step(delta) {
   if (i < 0) i = state.viewable.length - 1;
   if (i >= state.viewable.length) i = 0;
   state.index = i;
+  resetView();
   renderViewer();
 }
 
@@ -738,6 +791,62 @@ function updateNav() {
   if (!multi) {
     el.prev.classList.remove('near');
     el.next.classList.remove('near');
+  }
+}
+
+/* ------------------------------------------------------------ 文件详情 */
+
+const KIND_LABEL = {
+  image: '图片', raw: 'RAW 原片', video: '视频',
+  pdf: 'PDF 文档', html: '网页', dir: '文件夹',
+};
+
+let detailPath = '';
+
+function toggleDetail() {
+  if (el.detail.hidden) showDetail(state.viewable[state.index]);
+  else hideDetail();
+}
+
+function hideDetail() {
+  detailPath = '';
+  el.detail.hidden = true;
+  el.info.classList.remove('open');
+}
+
+async function showDetail(item) {
+  if (!item) return;
+  detailPath = item.path;
+  el.detail.hidden = false;
+  el.info.classList.add('open');
+  // 哈希名 / 超长名在卡片里折两行会留下孤零零一个字母，中间省略更好看；全名留着做 tooltip
+  el.detailName.textContent = item.name.length > 26
+    ? item.name.slice(0, 12) + '…' + item.name.slice(-12)
+    : item.name;
+  el.detailName.title = item.name;
+  el.detailKind.textContent = '读取中…';
+  el.detailBody.innerHTML = '';
+  try {
+    const r = await fetch(`/api/detail?path=${encodeURIComponent(item.path)}`);
+    const d = await r.json();
+    if (detailPath !== item.path) return;   /* 期间已经翻到别的图了 */
+    if (!d.ok) {
+      el.detailKind.textContent = '读不出详细信息';
+      return;
+    }
+    const kind = KIND_LABEL[d.kind] || String(d.ext || '').replace('.', '').toUpperCase();
+    el.detailKind.textContent = kind;
+    el.detailBody.innerHTML = d.sections.map((sec) => `
+      <section class="detail-sec">
+        <h4>${escapeHtml(sec.title)}</h4>
+        ${sec.rows.map(([k, v]) => `
+          <div class="detail-row">
+            <span class="k">${escapeHtml(k)}</span>
+            <span class="v">${escapeHtml(String(v == null ? '' : v))}</span>
+          </div>`).join('')}
+      </section>`).join('');
+  } catch (e) {
+    if (detailPath === item.path) el.detailKind.textContent = '读取失败';
   }
 }
 
@@ -762,6 +871,7 @@ function renderViewer() {
   pendingView = null;
   el.zoomBar.hidden = true;
   el.edit.hidden = true;
+  hideDetail();
   updateNav();
   /* PDF / HTML 走 iframe，指针消息到不了外层：这类改由按钮自身 hover 唤出 */
   el.viewer.classList.toggle('nav-fixed', item.kind !== 'image' && item.kind !== 'video');
@@ -777,7 +887,10 @@ function renderViewer() {
     /* 飞行期间查看器底色透明，让网格留在下面当背景，这样点下去不会先白一下 */
     if (flyFrom && startFly(flyFrom)) el.viewer.classList.add('flying');
     el.zoomBar.hidden = false;
+    el.viewTools.hidden = false;
+    if (el.btnRotate) el.btnRotate.classList.remove('away');
     el.edit.hidden = !window.BNImageEditor;
+    syncViewTools();
 
     srcHi = item.native ? fsUrl(item.path, item.rev) : renderUrl(item, 4096, item.rev);
     img.src = srcHi;
@@ -816,60 +929,6 @@ function renderViewer() {
     el.stage.appendChild(img);
   } else if (item.kind === 'video') {
     showVideo(item, restore && restore.kind === 'video' ? restore.mediaTime : 0);
-  } else if (item.kind === 'su') {
-    /* SketchUp 模型：只有文件里自带的 256px 预览图，不做缩放/编辑，
-       放大只会变糊；给一个「用 SketchUp 打开」的出口就行。
-       模型里存过的场景（轴测图、平面图…）各有小图，点击就地切换。 */
-    const wrap = document.createElement('div');
-    wrap.className = 'su-wrap';
-    const card = document.createElement('div');
-    card.className = 'su-card';
-    const im = document.createElement('img');
-    im.className = 'su-shot';
-    im.alt = item.name;
-    im.src = suUrl(item, 512);
-    card.appendChild(im);
-
-    const strip = document.createElement('div');
-    strip.className = 'su-scenes';
-    strip.hidden = true;
-    card.appendChild(strip);
-
-    const foot = document.createElement('div');
-    foot.className = 'su-foot';
-    foot.innerHTML = `<span>SketchUp 预览图 · 文件里自带的上次保存视角</span>
-      <button onclick="openExternal('${encodeURIComponent(item.path)}')">用 SketchUp 打开</button>`;
-    card.appendChild(foot);
-
-    wrap.appendChild(card);
-    el.stage.appendChild(wrap);
-    showInfo(item, 'SketchUp 模型');
-
-    const base = `/api/su?path=${encodeURIComponent(item.path)}&w=`;
-    const pick = (btn) => {
-      for (const b of strip.children) b.classList.toggle('on', b === btn);
-    };
-    fetch(`/api/su-scenes?path=${encodeURIComponent(item.path)}`)
-      .then((r) => r.json())
-      .then((d) => {
-        const list = (d && d.scenes) || [];
-        if (!list.length) return;
-        list.forEach((s, i) => {
-          const b = document.createElement('button');
-          b.className = 'su-scene';
-          b.title = s.name;
-          const t = document.createElement('img');
-          t.src = `${base}256&scene=${i}${item.rev ? '&r=' + item.rev : ''}`;
-          t.alt = s.name;
-          const lb = document.createElement('span');
-          lb.textContent = s.name;
-          b.append(t, lb);
-          b.onclick = () => { pick(b); im.src = `${base}512&scene=${i}${item.rev ? '&r=' + item.rev : ''}`; };
-          strip.appendChild(b);
-        });
-        strip.hidden = false;
-      })
-      .catch(() => { /* 没有场景就只显示预览图 */ });
   } else if (item.kind === 'pdf') {
     const wrap = document.createElement('div');
     wrap.className = 'frame-wrap';
@@ -879,18 +938,6 @@ function renderViewer() {
     wrap.appendChild(f);
     el.stage.appendChild(wrap);
     showInfo(item, 'PDF');
-  } else if (item.kind === 'docx' || item.kind === 'xlsx' || item.kind === 'pptx') {
-    /* Office 三种：服务端把文件转成一张网页，这里直接嵌进来 */
-    const label = { docx: 'Word 文档', xlsx: 'Excel 表格', pptx: 'PowerPoint 演示' }[item.kind];
-    const wrap = document.createElement('div');
-    wrap.className = 'frame-wrap';
-    wrap.innerHTML = `<div class="frame-note"><span>${label} · 内置预览（图形与表格按原样排版，图表不还原）</span><button onclick="openExternal('${encodeURIComponent(item.path)}')">用默认程序打开</button></div>`;
-    const f = document.createElement('iframe');
-    f.setAttribute('sandbox', 'allow-same-origin');
-    f.src = `/api/office?path=${encodeURIComponent(item.path)}&theme=${state.theme}${item.rev ? '&r=' + item.rev : ''}`;
-    wrap.appendChild(f);
-    el.stage.appendChild(wrap);
-    showInfo(item, label);
   } else if (item.kind === 'raw') {
     errorState(item, '相机 RAW 原片暂不解码，可用系统默认程序或相机厂商软件打开');
     showInfo(item, 'RAW 原片');
@@ -1026,6 +1073,7 @@ async function transcodePlay(item, got, seekAt = 0) {
     <div class="tx-head">${escapeHtml(got.reason || '该编码')} · 正在转成可播放的 H.264</div>
     <div class="tx-bar"><i></i></div>
     <div class="tx-note">只在第一次打开时转一遍，之后直接用缓存，不再重复转。</div>
+    <div class="tx-tip">iPhone 拍的视频是 H.265（HEVC），Windows 默认不带这个解码器，所以第一次得转一遍。装上微软的「HEVC 视频扩展」之后就不用转，打开即播。<button class="tx-link" onclick="openShop()">去装</button></div>
     <div class="tx-act">
       <button onclick="openExternal('${encodeURIComponent(item.path)}')">不等了，用系统程序打开</button>
     </div>`;
@@ -1109,6 +1157,27 @@ async function showInfo(item, extra) {
 
 /* ------------------------------------------------------------ 缩放 */
 
+/* 看图方向：只影响观看，绝不改文件。旋转/镜像后按新方向重新适配窗口 */
+const view = { rot: 0, flipH: false, flipV: false };
+
+function viewDims() {
+  const odd = view.rot % 2 === 1;
+  return { w: odd ? natH : natW, h: odd ? natW : natH };
+}
+
+function resetView() {
+  view.rot = 0;
+  view.flipH = false;
+  view.flipV = false;
+  syncViewTools();
+}
+
+function syncViewTools() {
+  if (!el.vpFlipH) return;
+  el.vpFlipH.classList.toggle('on', view.flipH);
+  el.vpFlipV.classList.toggle('on', view.flipV);
+}
+
 const MIN_SCALE = 0.04;   // 最小 4%
 const MAX_SCALE = 8;      // 最大 800%
 
@@ -1118,7 +1187,8 @@ function computeFit() {
   const sw = el.stage.clientWidth || 0;
   const sh = el.stage.clientHeight || 0;
   if (!sw || !sh || !natW || !natH) return 1;
-  return Math.min(sw / natW, sh / natH);
+  const d = viewDims();
+  return Math.min(sw / d.w, sh / d.h);
 }
 
 function updateZoomBar() {
@@ -1129,10 +1199,16 @@ function updateZoomBar() {
 }
 
 function applyT(img) {
-  /* 盒子始终是窗口大小，图片在其中 contain 居中；
-     transform 只叠加「当前比例相对铺满比例」的倍数与位移 */
+  /* 元素先按「适配窗口时的像素尺寸」摆好，transform 再叠比例与位移；
+     旋转 / 镜像接在最后，所以它们是在图像自己的坐标里做的 */
   const z = fitScale > 0 ? scale / fitScale : scale;
-  img.style.transform = `translate(${tx}px, ${ty}px) scale(${z})`;
+  if (natW && natH && fitScale > 0) {
+    img.style.width = Math.max(1, Math.round(natW * fitScale)) + 'px';
+    img.style.height = Math.max(1, Math.round(natH * fitScale)) + 'px';
+  }
+  const flip = `${view.flipH ? -1 : 1}, ${view.flipV ? -1 : 1}`;
+  img.style.transform =
+    `translate(${tx}px, ${ty}px) scale(${z}) rotate(${view.rot * 90}deg) scale(${flip})`;
   updateZoomBar();
   syncSource();
 }
@@ -1140,8 +1216,9 @@ function applyT(img) {
 function clampPan() {
   const sw = el.stage.clientWidth || 0;
   const sh = el.stage.clientHeight || 0;
-  const maxX = Math.max(0, (natW * scale - sw) / 2);
-  const maxY = Math.max(0, (natH * scale - sh) / 2);
+  const d = viewDims();
+  const maxX = Math.max(0, (d.w * scale - sw) / 2);
+  const maxY = Math.max(0, (d.h * scale - sh) / 2);
   tx = Math.min(maxX, Math.max(-maxX, tx));
   ty = Math.min(maxY, Math.max(-maxY, ty));
 }
@@ -1161,6 +1238,31 @@ function applyScale(next, ox = 0, oy = 0) {
 
 function zoomBy(f) {
   applyScale(scale * f, 0, 0);
+}
+
+function turnView(sign) {
+  if (!zoomEl || !natW) return;
+  view.rot = (view.rot + (sign > 0 ? 1 : 3)) % 4;
+  fitToWindow();
+  syncViewTools();
+  el.zoomPct.textContent = Math.round(scale * 100) + '%';
+  toast(sign > 0 ? '顺时针 90°' : '逆时针 90°');
+}
+
+function mirrorView(axis) {
+  if (!zoomEl || !natW) return;
+  if (axis === 'h') view.flipH = !view.flipH;
+  else view.flipV = !view.flipV;
+  syncViewTools();
+  applyT(zoomEl);
+  toast(axis === 'h' ? (view.flipH ? '左右镜像' : '取消左右镜像')
+                     : (view.flipV ? '上下镜像' : '取消上下镜像'));
+}
+
+function resetViewDir() {
+  if (!zoomEl || !natW) return;
+  resetView();
+  fitToWindow();
 }
 
 function fitToWindow() {
@@ -1348,10 +1450,8 @@ function panelContent() {
   ${row('图形与矢量', 'SVG SVGZ<br><span class="dim">AI（PDF 兼容部分以 PDF 方式打开）· RAW 相机原片暂不解码</span>')}
   ${row('视频', 'MP4 M4V MOV WEBM OGV OGG TS M2TS MTS MKV AVI WMV FLV F4V MPG MPEG VOB 3GP 3G2<br><span class="dim">能否播放取决于系统与浏览器内的编码支持，失败时可一键交给系统播放器</span>')}
   ${row('文档', 'PDF<br><span class="dim">使用内置阅读器，可翻页、缩放、搜索</span>')}
-  ${row('Office', 'DOCX XLSX PPTX<br><span class="dim">内置转成网页来看：文字、表格、图片与版面按原样排，图表、SmartArt 不还原。不启动 Word / Excel / PowerPoint</span>')}
   ${row('网页', 'HTML HTM XHTML<br><span class="dim">沙箱内渲染，可直接查看本地导出的作品页</span>')}
-  ${row('模型', 'SKP<br><span class="dim">直接读 SketchUp 存在文件里的预览图（256px）和存过的场景，不解析几何、不启动 SketchUp</span>')}
-  ${row('不纳入', '<span class="x">DOC XLS PPT PPS PPSX POT POTX KEY ODP</span><br><span class="dim">旧版二进制格式与幻灯片放映格式不展开，避免与系统内置行为冲突</span>')}
+  ${row('不纳入', '<span class="x">SKP DOCX XLSX PPTX DOC XLS PPT</span><br><span class="dim">这是看图工具，不做资源管理器：模型与其他办公文档请用各自的程序打开</span>')}
 
   <h2>操作</h2>
   <div class="kbd-grid">
@@ -1406,7 +1506,7 @@ function openEditorFor(item) {
     toast('编辑器还没准备好');
     return;
   }
-  window.BNImageEditor.open(item);
+  window.BNImageEditor.open(item, { rot: view.rot, flipH: view.flipH, flipV: view.flipV });
 }
 
 /* 编辑器退出：viewer 还在原位，什么都不用做 */
@@ -1435,6 +1535,13 @@ async function onEditorSaved(path, over) {
 }
 
 /* ------------------------------------------------------------ 外部打开 */
+window.openShop = async () => {
+  try {
+    const r = await fetch('/api/shop');
+    const d = await r.json();
+    if (!d.ok) toast('没能打开商店页面');
+  } catch (e) { toast('没能打开商店页面'); }
+};
 window.openExternal = async (encoded) => {
   const p = decodeURIComponent(encoded);
   try {
@@ -1477,6 +1584,17 @@ function bindEvents() {
   /* 窗口宽度变化、滚动条出现/消失都会改变列宽，行高跟着重算 */
   if (window.ResizeObserver) new ResizeObserver(() => syncCellHeight()).observe(el.grid);
 
+  /* 看图方向：旋转 / 镜像（只改观看，不动文件） */
+  if (el.btnRotate) {
+    el.btnRotate.classList.add('away');
+    el.btnRotate.onclick = () => { if (!el.viewer.hidden && zoomEl) turnView(1); };
+  }
+
+  el.vpRotL.onclick = () => turnView(-1);
+  el.vpRotR.onclick = () => turnView(1);
+  el.vpFlipH.onclick = () => mirrorView('h');
+  el.vpFlipV.onclick = () => mirrorView('v');
+
   /* 缩略图大小选择 */
   const sizeWrap = $('.size-wrap');
   const sizePop = $('#sizePop');
@@ -1512,6 +1630,24 @@ function bindEvents() {
   el.next.onclick = () => step(1);
   el.edit.onclick = () => openEditorFor(currentItem);
 
+  el.info.onclick = () => toggleDetail();
+  el.info.onkeydown = (e) => {
+    if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleDetail(); }
+  };
+  el.detailClose.onclick = () => hideDetail();
+  el.detailOpen.onclick = () => {
+    const it = state.viewable[state.index];
+    if (it) openExternal(encodeURIComponent(it.path));
+  };
+  el.detailReveal.onclick = async () => {
+    const it = state.viewable[state.index];
+    if (!it) return;
+    try {
+      const r = await fetch(`/api/reveal?path=` + encodeURIComponent(it.path));
+      const d = await r.json();
+      if (!d.ok) toast('打不开所在文件夹');
+    } catch (e) { toast('打不开所在文件夹'); }
+  };
   el.zoomIn.onclick = () => zoomBy(1.25);
   el.zoomOut.onclick = () => zoomBy(0.8);
   el.zoomFit.onclick = () => fitToWindow();
@@ -1538,6 +1674,7 @@ function bindEvents() {
     const typing = document.activeElement === el.locateInput;
 
     if (e.key === 'Escape') {
+      if (!el.detail.hidden) return hideDetail();
       if (!el.panel.hidden) return closePanel();
       if (!el.locate.hidden) return closeLocate();
       if (!el.viewer.hidden) return closeViewer();
@@ -1561,6 +1698,18 @@ function bindEvents() {
       if (!e.ctrlKey && !e.metaKey && (e.key === 'e' || e.key === 'E')) {
         e.preventDefault();
         return openEditorFor(currentItem);
+      }
+      if (!e.ctrlKey && !e.metaKey && (e.key === 'i' || e.key === 'I')) {
+        e.preventDefault();
+        return toggleDetail();
+      }
+      if (!e.ctrlKey && !e.metaKey && (e.key === 'r' || e.key === 'R')) {
+        e.preventDefault();
+        return turnView(e.shiftKey ? -1 : 1);
+      }
+      if (!e.ctrlKey && !e.metaKey && (e.key === 'm' || e.key === 'M')) {
+        e.preventDefault();
+        return mirrorView(e.shiftKey ? 'v' : 'h');
       }
       switch (e.key) {
         case 'ArrowRight': case 'ArrowDown': e.preventDefault(); return step(1);

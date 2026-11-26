@@ -1,4 +1,4 @@
-﻿/* BNImage · 统一查看器 ------------------------------------------------ */
+/* BNImage · 统一查看器 ------------------------------------------------ */
 /* 一套强调色（品牌蓝）、一套圆角、一套字号。                                 */
 
 :root {
@@ -26,6 +26,7 @@ html[data-theme="dark"] {
   --bg-soft: #1a1a1e;
   --cell-bg: #1b1b1f;
   --cell-bg-hover: #24242a;
+  --lift: 0 6px 14px rgba(0, 0, 0, .38), 0 16px 34px rgba(0, 0, 0, .34);
   --text: #f0f0f3;
   --text-2: #b6b6bf;
   --muted: #8b8b95;
@@ -50,6 +51,7 @@ html[data-theme="light"] {
   --bg-soft: #f4f4f5;
   --cell-bg: #ececee;
   --cell-bg-hover: #e2e2e6;
+  --lift: 0 6px 16px rgba(0, 0, 0, .14), 0 18px 38px rgba(0, 0, 0, .11);
   --text: #17171a;
   --text-2: #4d4d55;
   --muted: #85858d;
@@ -272,6 +274,11 @@ button { -webkit-app-region: no-drag; }
   outline: none;
 }
 
+.cell {
+  /* 悬停时整格轻轻上浮，图片、视频、文件夹、PDF 卡一视同仁 */
+  transition: transform .2s var(--ease);
+}
+
 .cell .thumb {
   position: relative;
   height: 0;
@@ -281,9 +288,12 @@ button { -webkit-app-region: no-drag; }
   overflow: hidden;
   isolation: isolate;
   box-shadow: inset 0 0 0 1px var(--line);
-  transition: background .18s var(--ease), box-shadow .18s var(--ease);
+  transition: background .18s var(--ease), box-shadow .22s var(--ease);
 }
-.cell:hover .thumb { background: var(--cell-bg-hover); box-shadow: inset 0 0 0 1px var(--line-strong); }
+.cell:hover .thumb {
+  background: var(--cell-bg-hover);
+  box-shadow: inset 0 0 0 1px var(--line-strong), var(--lift);
+}
 
 .cell img,
 .cell video {
@@ -294,7 +304,7 @@ button { -webkit-app-region: no-drag; }
   object-fit: cover;
   display: block;
   opacity: 0;
-  transition: opacity .35s var(--ease);
+  transition: opacity .35s var(--ease), transform .32s var(--ease);
 }
 .cell img.ready,
 .cell video.ready { opacity: 1; }
@@ -357,8 +367,39 @@ html[data-theme="light"] .cell .thumb {
 }
 
 .cell.folder .thumb { background: var(--folder-tint); box-shadow: inset 0 0 0 1px transparent; }
-.cell.folder:hover .thumb { background: var(--accent-soft); box-shadow: inset 0 0 0 1px var(--accent); }
+.cell.folder:hover .thumb { background: var(--accent-soft); box-shadow: inset 0 0 0 1px var(--accent), var(--lift); }
+/* 文档类（PDF）用纸白底 + 完整显示，别把页面裁掉两边 */
+.cell.doctile .thumb {
+  background: #fff;
+  box-shadow: inset 0 0 0 1px var(--line);
+}
+.cell.doctile .thumb img { object-fit: contain; }
+.cell.doctile:hover .thumb { background: #fff; }
+
+/* 右下角的格式角标：压在缩略图上，图片不显示 */
+.cell .tbadge {
+  position: absolute;
+  right: 6px;
+  bottom: 6px;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  height: 17px;
+  padding: 0 5px;
+  border-radius: 4px;
+  background: rgba(16, 16, 19, .68);
+  color: #fff;
+  font-family: var(--mono);
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: .06em;
+  line-height: 1;
+  pointer-events: none;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, .28);
+}
+
 .cell .glyph {
+  transition: transform .2s var(--ease);
   position: absolute;
   inset: 0;
   display: grid;
@@ -378,7 +419,7 @@ html[data-theme="light"] .cell .thumb {
 /* 上次看过的那张：一圈蓝环，回来一眼能找到 */
 .cell.last .thumb,
 .cell.last:hover .thumb {
-  box-shadow: inset 0 0 0 2px var(--accent);
+  box-shadow: inset 0 0 0 2px var(--accent), var(--lift);
 }
 
 /* 网格尾部的说明（不在支持范围内的文件数等） */
@@ -617,11 +658,17 @@ html[data-theme="light"] .cell .thumb {
 .viewer-close svg { width: 19px; height: 19px; }
 .viewer-close:hover { background: var(--cell-bg-hover); border-color: var(--line-strong); }
 
-.viewer-edit {
+/* 右上角一排动作：详情 / 编辑 */
+.viewer-acts {
   position: absolute;
   top: 14px;
   right: 16px;
   z-index: 6;
+  display: flex;
+  gap: 8px;
+}
+
+.viewer-edit {
   display: flex;
   align-items: center;
   gap: 6px;
@@ -637,6 +684,7 @@ html[data-theme="light"] .cell .thumb {
 }
 .viewer-edit svg { width: 15px; height: 15px; }
 .viewer-edit:hover { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
+.viewer-edit.on { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
 
 /* 翻页：常驻半透明，靠近变实；只有一张时 .off 彻底收掉 */
 .nav-zone {
@@ -684,12 +732,22 @@ html[data-theme="light"] .cell .thumb {
   user-select: none;
 }
 
+/* 底栏这行字本身就是「详情」按钮：不加图标、不加文字，只让它在悬停时亮起来 */
 .viewer-info {
   display: flex;
   align-items: baseline;
   gap: 10px;
   min-width: 0;
   flex: 1;
+  cursor: pointer;
+  border-radius: var(--r-xs);
+  transition: opacity .14s var(--ease);
+}
+.viewer-info:hover .fname { color: var(--accent); }
+.viewer-info.open .fname { color: var(--accent); }
+.viewer-info:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: 3px;
 }
 .viewer-info .fname {
   font-size: 13px;
@@ -1014,93 +1072,163 @@ img.fly {
 .viewer.flying .viewer-edit,
 .viewer.flying .nav-zone { opacity: 0; pointer-events: none; }
 
-/* ------------------------------------------------------- SketchUp 预览 */
-/* .skp 里只有一张 256px 的预览图（SketchUp 上次保存时的视角）。
-   所以这里不放大到全屏——按 360px 摆一张就好，再大只会更糊。 */
-.cell .sbadge {
-  position: absolute;
-  top: 8px;
-  left: 8px;
-  height: 17px;
-  padding: 0 5px;
-  display: grid;
-  place-items: center;
-  border-radius: 3px;
-  font: 600 10px/1 ui-monospace, "SF Mono", Consolas, monospace;
-  letter-spacing: .05em;
-  color: #fff;
-  background: rgba(16, 16, 19, .6);
-}
-.cell.tile .sbadge { display: none; }
 
-.viewer-stage .su-wrap {
-  position: absolute;
-  inset: 0;
-  display: grid;
-  place-items: center;
-  padding: 58px 24px 16px;
+/* ------------------------------------------------------------ 悬停动效 */
+/* 只做「上浮 + 微放大」两件事：抬起来一点点、缩略图放大 3.5%，
+   靠投影产生前后层次。系统开了「减少动态效果」时全部不播。 */
+@media (prefers-reduced-motion: no-preference) {
+  .cell:hover { transform: translateY(-2px); }
+  .cell:active { transform: translateY(-1px) scale(.994); }
+  .cell:hover .thumb img,
+  .cell:hover .thumb video { transform: scale(1.04); }
+  .cell:hover .glyph { transform: scale(1.06); }
 }
-.viewer-stage .su-card {
+
+/* 键盘浏览时也要看得出焦点在哪 */
+.cell:focus-visible .thumb { box-shadow: inset 0 0 0 2px var(--accent); }
+
+/* ------------------------------------------------------------ 文件详情 */
+/* 右上角浮出的一张卡片，不重排画面；尺寸按「看一眼就知道是什么」来定 */
+.detail {
+  position: absolute;
+  left: 16px;
+  bottom: calc(var(--foot-h) + 12px);
+  z-index: 7;
+  width: 322px;
+  max-height: calc(100% - var(--foot-h) - 74px);
   display: flex;
   flex-direction: column;
-  align-items: center;
-}
-.viewer-stage .su-card img.su-shot {
-  width: 360px;
-  max-width: 100%;
-  height: auto;
-  cursor: default;
-  border-radius: var(--r-md);
-  background: var(--cell-bg);
-  box-shadow: inset 0 0 0 1px var(--line), 0 12px 40px rgba(0, 0, 0, .18);
-}
-.viewer-stage .su-foot {
-  margin-top: 16px;
-  display: flex;
-  align-items: center;
-  gap: 14px;
-  font-size: 12px;
-  color: var(--muted);
-}
-.viewer-stage .su-foot button {
   border: 1px solid var(--line-strong);
-  background: none;
-  color: var(--text-2);
-  font: inherit;
-  font-size: 12px;
-  padding: 4px 11px;
+  border-radius: var(--r-md);
+  background: var(--bg);
+  box-shadow: 0 18px 46px rgba(0, 0, 0, .28);
+  overflow: hidden;
+  animation: pop-in .16s var(--ease) both;
+}
+
+.detail-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 13px 12px 11px 14px;
+  border-bottom: 1px solid var(--line);
+}
+.detail-title { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+.detail-title b {
+  font-size: 13.5px;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+  /* 文件名长了会折两行，多出来的截掉——卡片里不需要看完整路径名，标题栏有 title */
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.detail-title span { font-size: 11.5px; color: var(--muted); }
+.detail-x {
+  flex: 0 0 auto;
+  width: 24px;
+  height: 24px;
+  display: grid;
+  place-items: center;
+  border: 0;
   border-radius: var(--r-xs);
+  background: transparent;
+  color: var(--muted);
+  font-size: 17px;
+  line-height: 1;
   cursor: pointer;
 }
-.viewer-stage .su-foot button:hover { color: var(--text); border-color: var(--muted); }
-.viewer-stage .su-scenes {
-  margin-top: 16px;
+.detail-x:hover { background: var(--cell-bg-hover); color: var(--text); }
+
+.detail-body { flex: 1; min-height: 0; overflow: auto; padding: 2px 14px 12px; }
+.detail-sec { margin-top: 12px; }
+.detail-sec h4 {
+  margin: 0 0 5px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--muted);
+  letter-spacing: .04em;
+}
+.detail-row {
   display: flex;
   gap: 10px;
-  flex-wrap: wrap;
-  justify-content: center;
-  max-width: 640px;
+  padding: 3px 0;
+  font-size: 12.5px;
+  line-height: 1.55;
 }
-.viewer-stage .su-scene {
+.detail-row .k { flex: 0 0 62px; color: var(--muted); }
+.detail-row .v { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.detail-row .v.num { font-family: var(--mono); font-size: 12px; }
+
+.detail-foot {
   display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 6px;
-  padding: 5px 5px 7px;
-  border: 1px solid transparent;
+  gap: 8px;
+  padding: 10px 12px;
+  border-top: 1px solid var(--line);
+  background: var(--bg-soft);
+}
+.detail-foot button {
+  flex: 1;
+  height: 30px;
+  border: 1px solid var(--line-strong);
   border-radius: var(--r-sm);
-  background: none;
+  background: transparent;
+  color: var(--text);
+  font-size: 12px;
+  cursor: pointer;
+  transition: background .15s var(--ease), border-color .15s var(--ease), color .15s var(--ease);
+}
+.detail-foot button:hover { background: var(--cell-bg-hover); }
+.detail-foot button.primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--on-accent);
+}
+.detail-foot button.primary:hover { filter: brightness(1.08); }
+
+/* 转码面板里那句「装扩展就能直接播」：是解决问题的提示，不是广告，所以做得安静些 */
+.tx-tip {
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px dashed var(--line);
+  font-size: 11.5px;
+  line-height: 1.65;
   color: var(--muted);
+}
+.tx-link {
+  margin-left: 2px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--accent);
   font: inherit;
   font-size: 11.5px;
+  text-decoration: underline;
+  text-underline-offset: 2px;
   cursor: pointer;
 }
-.viewer-stage .su-scene img {
-  width: 96px;
-  height: auto;
-  border-radius: 3px;
-  box-shadow: inset 0 0 0 1px var(--line);
-  display: block;
+.tx-link:hover { color: var(--text); }
+
+/* 看图方向：页脚里的小按钮组，跟缩放条并排 */
+/* 顶栏的旋转键只在看图时出现；用 visibility 让位，避免右上角按钮位置跳动 */
+#btnRotate svg { width: 19px; height: 19px; }
+.icon-btn.away { visibility: hidden; pointer-events: none; }
+
+.vp-tools { display: flex; align-items: center; gap: 2px; margin-right: 10px; }
+.vp-btn {
+  width: 30px; height: 30px;
+  display: grid; place-items: center;
+  border: 0; border-radius: var(--r-sm);
+  background: none; color: var(--text-2);
+  cursor: pointer;
+  transition: background .16s, color .16s, transform .16s;
 }
-.viewer-stage .su-scene:hover { color: var(--text); background: var(--accent-soft); }
-.viewer-stage .su-scene.on { color: var(--accent); border-color: var(--accent); }
+.vp-btn svg { width: 17px; height: 17px; }
+.vp-btn:hover { background: var(--bg-soft); color: var(--text); transform: translateY(-1px); }
+.vp-btn:active { transform: scale(.94); }
+.vp-btn.on { color: var(--accent); background: var(--accent-soft); }
+.vp-btn.on:hover { transform: none; }
+@media (prefers-reduced-motion: reduce) {
+  .vp-btn, .vp-btn:hover, .vp-btn:active { transform: none; }
+}

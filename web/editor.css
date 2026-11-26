@@ -1,4 +1,4 @@
-﻿/* BNImage · 图片编辑器 ---------------------------------------------- */
+/* BNImage · 图片编辑器 ---------------------------------------------- */
 /* 编辑器跟着图库的明暗走：浅色下就是白底，深色下才是暗底。
    强调色仍然是品牌蓝，不再有第二种强调色。 */
 
@@ -31,6 +31,9 @@
   --ed-accent-soft: rgba(127, 155, 255, .16);
   --ed-on-accent: #0b0b0e;
   --ed-warn: #e0715a;
+  /* 裁剪框用品牌克莱因蓝；深色下提亮一档，纯 #002fa7 在黑底上几乎看不见 */
+  --crop-ink: #3357d6;
+  --crop-guide: rgba(124, 147, 255, .42);
 
   /* 复用的 .zb-* 控件要跟着编辑器走，这里把主题变量覆盖成深色一套 */
   --bg: #0d0d0f;
@@ -73,6 +76,8 @@ html[data-theme="light"] .editor {
   --ed-accent-soft: rgba(0, 47, 167, .08);
   --ed-on-accent: #ffffff;
   --ed-warn: #c0442c;
+  --crop-ink: #002fa7;
+  --crop-guide: rgba(0, 47, 167, .42);
 
   --bg: #ffffff;
   --bg-soft: #f6f6f7;
@@ -177,11 +182,16 @@ html[data-theme="light"] .ed-slider::-webkit-slider-thumb {
   color: var(--text-2);
   font-size: 13px;
   cursor: pointer;
-  transition: color .14s var(--ease), background .14s var(--ease), border-color .14s var(--ease);
+  transition: color .14s var(--ease), background .14s var(--ease),
+              border-color .14s var(--ease), transform .16s var(--ease);
 }
 .ed-tool svg { width: 16px; height: 16px; flex: none; color: var(--ed-dim); }
-.ed-tool:hover { color: var(--text); background: var(--ed-hover); }
+.ed-tool:hover { color: var(--text); background: var(--ed-hover); transform: translateY(-1px); }
 .ed-tool:hover svg { color: var(--text); }
+.ed-tool:active { transform: translateY(0) scale(.97); }
+.ed-tool svg { transition: transform .2s var(--ease), color .14s var(--ease); }
+.ed-tool:hover svg { transform: scale(1.1); }
+.ed-tool.on, .ed-tool.on:hover { transform: none; }
 .ed-tool.on {
   background: var(--ed-accent-soft);
   border-color: var(--ed-accent);
@@ -279,28 +289,71 @@ html[data-theme="light"] .ed-slider::-webkit-slider-thumb {
 .ed-crop-box {
   position: absolute;
   box-sizing: border-box;
-  border: 1px solid rgba(255, 255, 255, .95);
-  box-shadow: 0 0 0 9999px rgba(0, 0, 0, .58);
+  /* 品牌色画框：最外 1px 白边保证深色照片上也看得见，里面 2px 克莱因蓝 */
+  border: 0;
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 255, 255, .92),
+    inset 0 0 0 3px var(--crop-ink),
+    0 0 0 9999px rgba(0, 0, 0, .56);
   cursor: move;
 }
 
+/* 三分线：轻到不抢画面，但辅助构图 */
+.ed-crop-box::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background-image:
+    linear-gradient(to right, transparent calc(33.333% - .5px), var(--crop-guide) calc(33.333% - .5px),
+      var(--crop-guide) calc(33.333% + .5px), transparent calc(33.333% + .5px)),
+    linear-gradient(to right, transparent calc(66.666% - .5px), var(--crop-guide) calc(66.666% - .5px),
+      var(--crop-guide) calc(66.666% + .5px), transparent calc(66.666% + .5px)),
+    linear-gradient(to bottom, transparent calc(33.333% - .5px), var(--crop-guide) calc(33.333% - .5px),
+      var(--crop-guide) calc(33.333% + .5px), transparent calc(33.333% + .5px)),
+    linear-gradient(to bottom, transparent calc(66.666% - .5px), var(--crop-guide) calc(66.666% - .5px),
+      var(--crop-guide) calc(66.666% + .5px), transparent calc(66.666% + .5px));
+}
+
+/* 手柄：四个角是加粗的直角括号，四条边是居中的短横条 */
 .ed-crop-box i {
   position: absolute;
-  width: 12px;
-  height: 12px;
-  background: #fff;
-  border-radius: 2px;
-  box-shadow: 0 1px 4px rgba(0, 0, 0, .45);
   z-index: 2;
+  width: 18px;
+  height: 18px;
+  background: none;
+  border: 0 solid var(--crop-ink);
+  filter: drop-shadow(0 0 1px rgba(255, 255, 255, .9)) drop-shadow(0 1px 3px rgba(0, 0, 0, .45));
+  transition: opacity .14s var(--ease);
 }
-.ed-crop-box i[data-h="nw"] { left: -1px; top: -1px; cursor: nwse-resize; }
-.ed-crop-box i[data-h="ne"] { right: -1px; top: -1px; cursor: nesw-resize; }
-.ed-crop-box i[data-h="sw"] { left: -1px; bottom: -1px; cursor: nesw-resize; }
-.ed-crop-box i[data-h="se"] { right: -1px; bottom: -1px; cursor: nwse-resize; }
-.ed-crop-box i[data-h="n"] { left: 50%; top: -1px; margin-left: -6px; cursor: ns-resize; }
-.ed-crop-box i[data-h="s"] { left: 50%; bottom: -1px; margin-left: -6px; cursor: ns-resize; }
-.ed-crop-box i[data-h="w"] { left: -1px; top: 50%; margin-top: -6px; cursor: ew-resize; }
-.ed-crop-box i[data-h="e"] { right: -1px; top: 50%; margin-top: -6px; cursor: ew-resize; }
+.ed-crop-box i[data-h="nw"] { left: 0; top: 0; border-left-width: 3px; border-top-width: 3px; cursor: nwse-resize; }
+.ed-crop-box i[data-h="ne"] { right: 0; top: 0; border-right-width: 3px; border-top-width: 3px; cursor: nesw-resize; }
+.ed-crop-box i[data-h="sw"] { left: 0; bottom: 0; border-left-width: 3px; border-bottom-width: 3px; cursor: nesw-resize; }
+.ed-crop-box i[data-h="se"] { right: 0; bottom: 0; border-right-width: 3px; border-bottom-width: 3px; cursor: nwse-resize; }
+
+.ed-crop-box i[data-h="n"],
+.ed-crop-box i[data-h="s"] {
+  left: 50%;
+  width: 26px;
+  height: 3px;
+  margin-left: -13px;
+  border-radius: 2px;
+  background: var(--crop-ink);
+}
+.ed-crop-box i[data-h="n"] { top: 0; cursor: ns-resize; }
+.ed-crop-box i[data-h="s"] { bottom: 0; cursor: ns-resize; }
+
+.ed-crop-box i[data-h="w"],
+.ed-crop-box i[data-h="e"] {
+  top: 50%;
+  width: 3px;
+  height: 26px;
+  margin-top: -13px;
+  border-radius: 2px;
+  background: var(--crop-ink);
+}
+.ed-crop-box i[data-h="w"] { left: 0; cursor: ew-resize; }
+.ed-crop-box i[data-h="e"] { right: 0; cursor: ew-resize; }
 
 .ed-crop-tag {
   position: absolute;
@@ -656,3 +709,72 @@ html[data-theme="light"] .ed-slider::-webkit-slider-thumb {
    面板/toast 得压在上面才看得见 */
 #panel { z-index: 90; }
 .toast { z-index: 95; }
+
+/* ------------------------------------------------------ 悬停动效总开关 */
+@media (prefers-reduced-motion: reduce) {
+  .ed-tool:hover,
+  .ed-tool:active,
+  .ed-tool:hover svg { transform: none; }
+}
+
+/* 透视尺：指引线只活在屏幕上，不进导出图 */
+.ed-persp {
+  position: absolute;
+  inset: 0;
+  z-index: 3;
+  overflow: visible;
+  pointer-events: none;
+}
+.ed-persp[hidden] { display: none; }
+.ed-persp line,
+.ed-persp circle,
+.ed-persp text {
+  vector-effect: non-scaling-stroke;
+  fill: none;
+  stroke: var(--crop-ink);
+  filter: drop-shadow(0 0 1px rgba(255, 255, 255, .85));
+}
+.ed-persp-hz {
+  stroke-dasharray: 5 5;
+  opacity: .5;
+}
+.ed-persp-ray {
+  stroke-dasharray: 7 6;
+  opacity: .85;
+}
+.ed-persp-vp {
+  fill: rgba(255, 255, 255, .92);
+  stroke-width: 1.5;
+}
+
+.ed-persp-tag {
+  fill: var(--crop-ink);
+  stroke: rgba(255, 255, 255, .9);
+  stroke-width: 3px;
+  paint-order: stroke;
+  stroke-linejoin: round;
+  font-family: var(--mono);
+  font-weight: 600;
+  text-anchor: start;
+}
+
+/* 方向：四个小方按钮排一行 */
+.ed-dirs { display: flex; gap: 8px; margin-bottom: 10px; }
+.ed-dir {
+  flex: 1;
+  height: 40px;
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--ed-line-2);
+  border-radius: var(--r-sm);
+  background: var(--ed-raise);
+  color: var(--ed-dim);
+  cursor: pointer;
+  transition: background .16s, color .16s, border-color .16s, transform .16s;
+}
+.ed-dir svg { width: 19px; height: 19px; }
+.ed-dir:hover { background: var(--ed-hover); color: var(--ed-text); transform: translateY(-1px); }
+.ed-dir:active { transform: scale(.96); }
+@media (prefers-reduced-motion: reduce) {
+  .ed-dir, .ed-dir:hover, .ed-dir:active { transform: none; }
+}

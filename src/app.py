@@ -1,4 +1,4 @@
-﻿#!/usr/bin/env python3
+#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
 BNImage · 统一查看器
@@ -72,7 +72,7 @@ except Exception:
     pass
 
 APP_NAME = "BNImage"
-APP_VERSION = "2.2"
+APP_VERSION = "2.5"
 MAX_UPLOAD = 200 * 1024 * 1024      # 编辑结果回写的上限
 FROZEN = bool(getattr(sys, "frozen", False))
 if FROZEN:
@@ -179,17 +179,6 @@ VIDEO = {
 PDF = {".pdf"}
 ILLUSTRATOR = {".ai"}          # PDF 兼容的 ai 可预览
 HTML = {".html", ".htm", ".xhtml", ".shtml"}
-# SketchUp 模型：文件本身是个 zip 包，里面带 SketchUp 自己存的预览图，
-# 取出来就能看，不用解析几何、也不用装任何东西。
-SKETCHUP = {".skp"}
-# Office 三种：文件本身都是 zip + XML，交给 officeview 自己拼网页，不依赖
-# Word/Excel/PowerPoint 或 LibreOffice（这台机器上都没有）。
-OFFICE = {".docx": "docx", ".xlsx": "xlsx", ".pptx": "pptx"}
-try:
-    from officeview import render as _office_render  # noqa: E402
-    import officeview
-except Exception:
-    officeview = None
 RAW_IMAGE = {".cr2", ".cr3", ".nef", ".arw", ".dng", ".orf", ".rw2",
              ".raf", ".srw", ".pef", ".rwl", ".raw", ".3fr", ".erf", ".mef"}
 
@@ -198,16 +187,15 @@ PRESENTATION = {".ppt", ".pptx", ".pps", ".ppsx", ".pot", ".potx",
                 ".pptm", ".potm", ".ppsm", ".key", ".odp", ".dps", ".dpt"}
 
 IMAGE_ANY = NATIVE_IMAGE | DECODE_IMAGE
-SUPPORTED = IMAGE_ANY | VIDEO | PDF | ILLUSTRATOR | HTML | SKETCHUP | set(OFFICE)
+SUPPORTED = IMAGE_ANY | VIDEO | PDF | ILLUSTRATOR | HTML
 
 # 系统/资源管理器自动生成的垃圾文件，列表里直接跳过
 JUNK_FILES = {"thumbs.db", "ehthumbs.db", "ehthumbs_vista.db", "desktop.ini",
               "iconcache.db", "folder.ini"}
 
-# SketchUp 每次保存都会在同目录留一份 .skb 备份（体积和模型一样大），
-# 对看图没有任何意义，跟着算「不支持的文件」只会让提示里凭空多出一倍数量。
+# SketchUp 每次保存都会留一份 .skb 备份（体积和模型一样大），本来就不是给人看的，
+# 让它去凑「不在支持范围内」的数量只会让提示虚高。
 JUNK_EXT = {".skb"}
-
 MIME_OVERRIDE = {
     ".svg": "image/svg+xml",
     ".svgz": "image/svg+xml",
@@ -254,10 +242,6 @@ def classify(path: str) -> str:
         return "pdf"
     if ext in HTML:
         return "html"
-    if ext in SKETCHUP:
-        return "su"
-    if ext in OFFICE:
-        return OFFICE[ext]
     if ext in RAW_IMAGE:
         return "raw"
     if ext in PRESENTATION:
@@ -279,8 +263,6 @@ def _thumb_path(key: str) -> Path:
     return CACHE / key[:2] / (key + ".webp")
 
 
-def _office_cache(key: str) -> Path:
-    return CACHE / "of" / key[:2] / (key + ".html")
 
 
 def _open_image(path: str):
@@ -333,6 +315,64 @@ def build_thumb(path: str, size: int):
     except OSError:
         pass
     return data, "image/webp"
+
+
+def _pdf_thumb_path(key: str) -> Path:
+    return CACHE / "pf" / key[:2] / (key + ".webp")
+
+
+_HAS_MUPDF = False
+try:
+    import pymupdf as _mupdf           # 只用来把 PDF 第一页画成图，不做别的
+    _HAS_MUPDF = True
+except Exception:
+    _mupdf = None
+
+
+def build_pdf_thumb(path: str, size: int):
+    """PDF / AI 第一页的缩略图。返回 (bytes, mime) 或 None。"""
+    if not (_HAS_MUPDF and HAS_PIL):
+        return None
+    try:
+        st = os.stat(path)
+    except OSError:
+        return None
+    key = hashlib.md5(
+        f"{path}|{st.st_mtime_ns}|{st.st_size}|{size}".encode("utf-8", "replace")
+    ).hexdigest()
+    cached = _pdf_thumb_path(key)
+    if cached.exists():
+        try:
+            return cached.read_bytes(), "image/webp"
+        except OSError:
+            pass
+    try:
+        doc = _mupdf.open(path)
+        page = doc.load_page(0)
+        rect = page.rect
+        if not rect.width or not rect.height:
+            doc.close()
+            return None
+        # 只画到缩略图够用的分辨率，别按 3 倍率整页渲染
+        scale = min(size / rect.width, size / rect.height)
+        scale = max(0.12, min(4.0, scale))
+        pix = page.get_pixmap(matrix=_mupdf.Matrix(scale, scale), alpha=False)
+        data = pix.tobytes("png")
+        doc.close()
+        im = Image.open(io.BytesIO(data))
+        im.load()
+        out = _to_webp(im, size, 82)
+        im.close()
+    except Exception:
+        return None
+    try:
+        cached.parent.mkdir(parents=True, exist_ok=True)
+        tmp = cached.with_suffix(".tmp")
+        tmp.write_bytes(out)
+        os.replace(tmp, cached)
+    except OSError:
+        pass
+    return out, "image/webp"
 
 
 def _vframe_path(key: str) -> Path:
@@ -439,135 +479,6 @@ def build_render(path: str, max_side: int):
 # zip 包，取这张图只是读一个小文件，就算模型 500MB 也只要几十毫秒——不解几何、
 # 不启动 SketchUp，正是「先快速看一眼」最合适的做法。SU_PREVIEWS = ("meta/preview_thumbnail.png", "meta/model_thumbnail.png")
 SU_MEMO = {}
-
-
-def su_zip_name(raw: bytes) -> str:
-    """zip 里的中文名多半没打 UTF-8 标记，zipfile 会按 cp437 解，
-    这里按原始字节还原成 UTF-8，场景名才不会变成乱码。"""
-    if isinstance(raw, str):
-        try:
-            return raw.encode("cp437").decode("utf-8")
-        except (UnicodeEncodeError, UnicodeDecodeError):
-            return raw
-    return raw
-
-
-def su_scene_names(path: str):
-    """模型里保存过的场景（每张一张 256×131 的小图），用于切换视角"""
-    try:
-        with zipfile.ZipFile(path) as z:
-            out = []
-            for info in z.infolist():
-                n = info.filename
-                if not n.startswith("scene_thumbnails/") or not n.lower().endswith(".png"):
-                    continue
-                base = su_zip_name(n[len("scene_thumbnails/"):-4])
-                out.append((base, n))
-            return out
-    except (zipfile.BadZipFile, OSError, KeyError, RuntimeError):
-        return []
-
-
-def su_preview_bytes(path: str, scene: int = -1):
-    """从 .skp 里取出内嵌预览图的原始字节，取不到返回 None"""
-    try:
-        with zipfile.ZipFile(path) as z:
-            if scene >= 0:
-                scenes = su_scene_names(path)
-                if 0 <= scene < len(scenes):
-                    data = z.read(scenes[scene][1])
-                    if data:
-                        return data
-                return None
-            names = set(z.namelist())
-            for name in SU_PREVIEWS:
-                if name in names:
-                    data = z.read(name)
-                    if data:
-                        return data
-    except (zipfile.BadZipFile, OSError, KeyError, RuntimeError):
-        pass
-    return None
-
-
-def build_su_thumb(path: str, box: int = 512, scene: int = -1):
-    """返回 (bytes, mime) 或 None。预览图本身 256px，放大只会变糊，box 只用来缩小。"""
-    if not HAS_PIL:
-        return None
-    try:
-        st = os.stat(path)
-    except OSError:
-        return None
-    key = "s" + hashlib.md5(
-        f"{path}|{st.st_mtime_ns}|{st.st_size}|{box}|{scene}".encode("utf-8", "replace")
-    ).hexdigest()
-    cached = _thumb_path(key)
-    if cached.exists():
-        try:
-            return cached.read_bytes(), "image/webp"
-        except OSError:
-            pass
-    raw = su_preview_bytes(path, scene)
-    if not raw:
-        return None
-    try:
-        im = Image.open(io.BytesIO(raw))
-        im.load()
-    except Exception:
-        return None
-    try:
-        data = _to_webp(im, box, 92)
-    finally:
-        try:
-            im.close()
-        except Exception:
-            pass
-    try:
-        cached.parent.mkdir(parents=True, exist_ok=True)
-        tmp = cached.with_suffix(".tmp")
-        tmp.write_bytes(data)
-        os.replace(tmp, cached)
-    except OSError:
-        pass
-    return data, "image/webp"
-
-
-# 渲染逻辑一变就加一，旧的缓存文件自动失效
-OFFICE_VER = 3
-
-
-def build_office_html(path: str, theme: str = "light"):
-    """把 docx/xlsx/pptx 转成一份静态网页（带磁盘缓存），返回 bytes 或 None"""
-    if officeview is None:
-        return None
-    try:
-        st = os.stat(path)
-    except OSError:
-        return None
-    key = "o" + hashlib.md5(
-        f"{path}|{st.st_mtime_ns}|{st.st_size}|{theme}|{OFFICE_VER}".encode("utf-8", "replace")
-    ).hexdigest()
-    cached = _office_cache(key)
-    if cached.exists():
-        try:
-            return cached.read_bytes()
-        except OSError:
-            pass
-    try:
-        data = officeview.render(path, theme)
-    except Exception:
-        traceback.print_exc()
-        return None
-    if not data:
-        return None
-    try:
-        cached.parent.mkdir(parents=True, exist_ok=True)
-        tmp = cached.with_suffix(".tmp")
-        tmp.write_bytes(data)
-        os.replace(tmp, cached)
-    except OSError:
-        pass
-    return data
 
 
 def read_exif(path: str):
@@ -779,6 +690,21 @@ def probe_video(path: str):
             vm = re.search(r"Stream #\d+:\d+.*?Video:\s*([a-zA-Z0-9_]+)", txt)
             if vm:
                 info["codec"] = vm.group(1).lower()
+            fm = re.search(r"([\d.]+) fps", txt)
+            if fm:
+                try:
+                    info["fps"] = float(fm.group(1))
+                except ValueError:
+                    pass
+            bm = re.search(r"bitrate:\s*(\d+)\s*kb/s", txt)
+            if bm:
+                info["bitrate"] = int(bm.group(1))
+            am = re.search(r"Stream #\d+:\d+.*?Audio:\s*([a-zA-Z0-9_]+)[^\n]*?(\d+) Hz,\s*([a-z]+)", txt)
+            if am:
+                info["acodec"] = am.group(1).lower()
+                ch = {"mono": 1, "stereo": 2, "5.1": 6, "5.1(side)": 6, "7.1": 8}.get(am.group(3))
+                if ch:
+                    info["channels"] = ch
             dm = re.search(r"Video:[^\n]*?(\d{2,5})x(\d{2,5})", txt)
             if dm:
                 info["w"], info["h"] = int(dm.group(1)), int(dm.group(2))
@@ -800,6 +726,204 @@ def probe_video(path: str):
             _INFO.clear()
         _INFO[key] = info
     return info
+
+
+def _fmt_bytes(n: int) -> str:
+    if n >= 1024 ** 3:
+        return "%.2f GB" % (n / 1024 ** 3)
+    if n >= 1024 ** 2:
+        return "%.1f MB" % (n / 1024 ** 2)
+    if n >= 1024:
+        return "%.0f KB" % (n / 1024)
+    return "%d B" % n
+
+
+def _fmt_time(ts: float) -> str:
+    try:
+        return time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(ts))
+    except (OSError, OverflowError, ValueError):
+        return ""
+
+
+def _fmt_sec(s: float) -> str:
+    if not s or s <= 0:
+        return ""
+    s = float(s)
+    m, sec = divmod(s, 60)
+    h, m = divmod(int(m), 60)
+    if h:
+        return "%d:%02d:%04.1f" % (h, m, sec)
+    return "%d:%04.1f" % (m, sec)
+
+
+def _exif_rows(im):
+    """拍照相关的几行：机身、镜头、曝光、时间、位置。没有就整行不出现。"""
+    rows = []
+    try:
+        ex = im.getexif()
+    except Exception:  # noqa: BLE001
+        return rows
+    if not ex:
+        return rows
+
+    # FNumber / ExposureTime / ISO / 焦距都在 0x8769 (ExifIFD) 里，不在顶层
+    merged = dict(ex)
+    try:
+        merged.update(dict(ex.get_ifd(0x8769) or {}))
+    except Exception:  # noqa: BLE001
+        pass
+
+    def one(tag):
+        v = merged.get(tag)
+        return "" if v is None else str(v).strip()
+
+    make, model = one(0x010F), one(0x0110)
+    if model:
+        cam = model if (not make or make.lower() in model.lower()) else f"{make} {model}"
+        rows.append(("相机", cam))
+    lens = one(0xA434)
+    if lens:
+        rows.append(("镜头", lens))
+
+    try:
+        fn = merged.get(0x829D)      # FNumber
+        et = merged.get(0x829A)      # ExposureTime
+        iso = merged.get(0x8827)     # ISOSpeedRatings
+        fl = merged.get(0x920A)      # FocalLength
+        parts = []
+        if fl:
+            parts.append("%g mm" % float(fl))
+        if fn:
+            parts.append("f/%g" % float(fn))
+        if et:
+            et = float(et)
+            parts.append(("1/%d s" % round(1 / et)) if et and et < 1 else ("%g s" % et))
+        if iso:
+            parts.append("ISO %s" % str(iso).strip())
+        if parts:
+            rows.append(("曝光", " · ".join(parts)))
+    except Exception:  # noqa: BLE001
+        pass
+
+    dto = one(0x9003) or one(0x0132)
+    if dto:
+        rows.append(("拍摄时间", dto.replace(":", "-", 2)))
+
+    try:
+        gps = ex.get_ifd(0x8825) or {}
+        if gps:
+            def deg(key, ref):
+                d = gps.get(key)
+                if not d:
+                    return None
+                try:
+                    d, m, s = (float(x) for x in d)
+                except Exception:  # noqa: BLE001
+                    return None
+                v = d + m / 60 + s / 3600
+                return -v if gps.get(ref) in ("S", "W") else v
+            lat = deg(2, 1)
+            lon = deg(4, 3)
+            if lat is not None and lon is not None:
+                rows.append(("拍摄位置", "%.5f, %.5f" % (lat, lon)))
+    except Exception:  # noqa: BLE001
+        pass
+    return rows
+
+
+def file_detail(path: str):
+    """给「详情」面板用的成组信息：文件 / 图像 / 拍摄 / 视频。"""
+    try:
+        st = os.stat(path)
+    except OSError:
+        return None
+    ext = ext_of(path)
+    kind = classify(os.path.basename(path))
+    files = [
+        ("大小", _fmt_bytes(st.st_size)),
+        ("位置", os.path.dirname(path)),
+        ("修改时间", _fmt_time(st.st_mtime)),
+    ]
+    try:
+        files.append(("创建时间", _fmt_time(st.st_ctime)))
+    except OSError:
+        pass
+    detail = {
+        "ok": True,
+        "name": os.path.basename(path),
+        "path": path,
+        "ext": ext,
+        "kind": kind,
+        "size": st.st_size,
+        "mtime": st.st_mtime,
+        "sections": [{"title": "文件", "rows": files}],
+    }
+
+    if kind in ("image", "raw"):
+        try:
+            with Image.open(path) as im:
+                rows = [
+                    ("像素", "%d × %d" % (im.width, im.height)),
+                    ("长宽比", _ratio(im.width, im.height)),
+                    ("色彩", im.mode),
+                ]
+                dpi = im.info.get("dpi")
+                if dpi and (round(dpi[0]) > 96 or round(dpi[1]) > 96):
+                    try:
+                        rows.append(("分辨率", "%d × %d DPI" % (round(dpi[0]), round(dpi[1]))))
+                    except Exception:  # noqa: BLE001
+                        pass
+                exif = _exif_rows(im)
+            if exif:
+                detail["sections"].append({"title": "拍摄", "rows": exif})
+            detail["sections"].append({"title": "图像", "rows": rows})
+        except Exception as exc:  # noqa: BLE001
+            _dbg(f"详情读图失败 {path}: {exc!r}")
+    elif kind == "video":
+        info = probe_video(path) or {}
+        rows = []
+        if info.get("w"):
+            rows.append(("像素", "%d × %d" % (info["w"], info["h"])))
+        if info.get("codec"):
+            rows.append(("编码", info["codec"].upper()))
+        if info.get("fps"):
+            rows.append(("帧率", "%g fps" % info["fps"]))
+        if info.get("dur"):
+            rows.append(("时长", _fmt_sec(info["dur"])))
+        if info.get("bitrate"):
+            rows.append(("码率", "%s Mb/s" % ("%.1f" % (info["bitrate"] / 1000))))
+        if info.get("acodec"):
+            rows.append(("音频", info["acodec"].upper() + (" · %d 声道" % info["channels"] if info.get("channels") else "")))
+        if info.get("tx"):
+            rows.append(("播放", "需转码（%s）" % (info.get("reason") or "编码")))
+        else:
+            rows.append(("播放", "直接播放"))
+        if rows:
+            detail["sections"].append({"title": "视频", "rows": rows})
+    elif ext == ".pdf":
+        try:
+            with open(path, "rb") as f:
+                blob = f.read()
+            pages = len(re.findall(rb"/Type\s*/Page[^s]", blob))
+            rows = [("页数", "%d 页" % pages if pages else "未知")]
+            detail["sections"].append({"title": "文档", "rows": rows})
+        except OSError:
+            pass
+    return detail
+
+
+def _ratio(w: int, h: int) -> str:
+    from math import gcd
+    if not w or not h:
+        return ""
+    g = gcd(w, h)
+    a, b = w // g, h // g
+    if a > 40 or b > 40:      # 3840x2560 化简成 3:2，但 1920x1080 化简没意义时给小数
+        for cand in ((16, 9), (16, 10), (4, 3), (3, 2), (5, 4), (21, 9), (2, 1), (1, 1)):
+            if abs(w / h - cand[0] / cand[1]) < 0.01:
+                return "%d : %d" % cand
+        return "%.2f : 1" % (w / h)
+    return "%d : %d" % (a, b)
 
 
 def tx_key(path: str):
@@ -852,8 +976,15 @@ def _tx_worker(path: str, key: str, dur: float):
     remux = info.get("codec") in SAFE_CODEC
     try:
         TX_DIR.mkdir(parents=True, exist_ok=True)
+        # 解码也丢给显卡：4K HEVC 用软解一帧要几十毫秒，开了 -hwaccel auto
+        # 同一段能快近一倍（实测 8s 片段 33s → 18s）。硬解不支持时再回退软解。
+        use_hw = {"on": not remux}
         cmd = [
             FFMPEG, "-y", "-hide_banner", "-nostdin", "-loglevel", "error",
+        ]
+        if use_hw["on"]:
+            cmd += ["-hwaccel", "auto"]
+        cmd += [
             "-i", path,
             "-map", "0:v:0", "-map", "0:a:0?",
         ]
@@ -871,31 +1002,41 @@ def _tx_worker(path: str, key: str, dur: float):
             "-progress", "pipe:1", "-nostats",
             "-f", "mp4", str(part),
         ]
-        proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                                creationflags=CREATE_NO_WINDOW)
-        assert proc.stdout is not None
-        for raw in proc.stdout:
-            line = raw.decode("utf-8", "replace").strip()
-            if line.startswith("out_time_us=") and dur > 0:
-                try:
-                    done = int(line.split("=", 1)[1]) / 1_000_000
-                except ValueError:
-                    continue
-                pct = max(0, min(99, int(done / dur * 100)))
-                with TX_LOCK:
-                    if key in TX_JOB:
-                        TX_JOB[key]["pct"] = pct
-        proc.wait(timeout=600)
-        err = b""
-        if proc.stderr is not None:
-            err = proc.stderr.read()[-500:]
-        if proc.returncode == 0 and part.exists() and part.stat().st_size > 1024:
+        def _run(argv):
+            proc = subprocess.Popen(argv, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                    creationflags=CREATE_NO_WINDOW)
+            assert proc.stdout is not None
+            for raw in proc.stdout:
+                line = raw.decode("utf-8", "replace").strip()
+                if line.startswith("out_time_us=") and dur > 0:
+                    try:
+                        done = int(line.split("=", 1)[1]) / 1_000_000
+                    except ValueError:
+                        continue
+                    pct = max(0, min(99, int(done / dur * 100)))
+                    with TX_LOCK:
+                        if key in TX_JOB:
+                            TX_JOB[key]["pct"] = pct
+            proc.wait(timeout=600)
+            err = b""
+            if proc.stderr is not None:
+                err = proc.stderr.read()[-500:]
+            return proc.returncode, err
+
+        rc, err = _run(cmd)
+        if rc != 0 and use_hw["on"]:
+            # 这张显卡硬解不了这种格式（少见）：去掉 -hwaccel 用软解再跑一次
+            _dbg("硬件解码失败，回退软解重试")
+            i = cmd.index("-hwaccel")
+            cmd = cmd[:i] + cmd[i + 2:]
+            rc, err = _run(cmd)
+        if rc == 0 and part.exists() and part.stat().st_size > 1024:
             os.replace(part, tgt)
             with TX_LOCK:
                 TX_JOB[key] = {"state": "ready", "pct": 100, "msg": ""}
             _dbg(f"转码完成 {path}")
         else:
-            msg = err.decode("utf-8", "replace").strip() or f"ffmpeg 退出码 {proc.returncode}"
+            msg = err.decode("utf-8", "replace").strip() or f"ffmpeg 退出码 {rc}"
             with TX_LOCK:
                 TX_JOB[key] = {"state": "error", "pct": 0, "msg": msg[:300]}
             _dbg(f"转码失败 {path}: {msg[:300]}")
@@ -1029,7 +1170,7 @@ def list_dir(path: str):
                     # 系统自己生成的文件，不算「不支持的文件」，免得白提醒
                     if e.name.lower() in JUNK_FILES:
                         continue
-                    if os.path.splitext(e.name)[1].lower() in JUNK_EXT:
+                    if ext_of(e.name) in JUNK_EXT:
                         continue
                     if e.is_dir(follow_symlinks=False):
                         dirs.append({"name": e.name, "path": e.path, "kind": "dir"})
@@ -1507,63 +1648,20 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(200, data, ctype,
                                   {"Cache-Control": "private, max-age=86400"})
 
-            if route == "/api/su":
+            
+                        
+            if route == "/api/pdfthumb":
                 raw = q.get("path", [""])[0]
                 path = safe_path(raw)
                 if not path or not os.path.isfile(path):
                     return self._send(404, "not found")
                 try:
-                    size = max(64, min(1024, int(q.get("w", ["512"])[0] or 512)))
-                    scene = int(q.get("scene", ["-1"])[0] or -1)
-                    res = build_su_thumb(path, size, scene)
+                    size = max(120, min(1024, int(q.get("w", ["420"])[0] or 420)))
+                    res = build_pdf_thumb(path, size)
                 except Exception:
                     res = None
                 if res is None:
                     return self._send(404, "no preview")
-                data, ctype = res
-                return self._send(200, data, ctype,
-                                  {"Cache-Control": "private, max-age=3600"})
-
-            if route == "/api/office":
-                path = safe_path(q.get("path", [""])[0])
-                if not path or not os.path.isfile(path):
-                    return self._send(404, "not found")
-                theme = q.get("theme", ["light"])[0]
-                if theme not in ("light", "dark"):
-                    theme = "light"
-                data = build_office_html(path, theme)
-                if data is None:
-                    return self._send(404, "cannot render")
-                # 转换结果在磁盘上有缓存（毫秒级），但对浏览器一律不缓存：
-                # 文件改过之后重新打开必须看到新的，不能让 WebView2 拿旧页面顶着。
-                return self._send(200, data, "text/html; charset=utf-8",
-                                  {"Cache-Control": "no-store"})
-
-            if route == "/api/su-scenes":
-                path = safe_path(q.get("path", [""])[0])
-                if not path or not os.path.isfile(path):
-                    return self._json({"scenes": []}, 404)
-                scenes = [{"name": n} for n, _ in su_scene_names(path)]
-                return self._json({"scenes": scenes})
-
-            if route in ("/api/thumb", "/api/render"):
-                raw = q.get("path", [""])[0]
-                path = safe_path(raw)
-                if not path or not os.path.isfile(path):
-                    return self._send(404, "not found")
-                try:
-                    if route == "/api/thumb":
-                        size = max(48, min(1024, int(q.get("w", ["360"])[0] or 360)))
-                        res = build_thumb(path, size)
-                    else:
-                        size = max(256, min(4096, int(q.get("w", ["2560"])[0] or 2560)))
-                        data = build_render(path, size)
-                        res = (data, "image/webp") if data else None
-                except Exception:
-                    res = None
-                if res is None:
-                    # 无法转码，退回原文件
-                    return self._file(path, mime_of(path))
                 data, ctype = res
                 return self._send(200, data, ctype,
                                   {"Cache-Control": "private, max-age=86400"})
@@ -1583,6 +1681,36 @@ class Handler(BaseHTTPRequestHandler):
                 if info:
                     base.update(info)
                 return self._json(base)
+
+            if route == "/api/detail":
+                path = safe_path(q.get("path", [""])[0])
+                if not path or not os.path.isfile(path):
+                    return self._json({"ok": False}, 404)
+                data = file_detail(path)
+                if not data:
+                    return self._json({"ok": False}, 404)
+                return self._json(data)
+
+            if route == "/api/shop":
+                # 只允许打开这一页：装 HEVC 扩展是唯一能「不转码直接播」的路
+                try:
+                    os.startfile("ms-windows-store://pdp/?productid=9NMZLZ57R3T")  # noqa: S606
+                    return self._json({"ok": True})
+                except Exception:
+                    return self._json({"ok": False}, 500)
+
+            if route == "/api/reveal":
+                path = safe_path(q.get("path", [""])[0])
+                if path and os.path.exists(path):
+                    try:
+                        if os.name == "nt":
+                            subprocess.Popen(["explorer", "/select,", os.path.normpath(path)])
+                        else:
+                            subprocess.Popen(["xdg-open", os.path.dirname(path)])
+                    except Exception:
+                        return self._json({"ok": False}, 500)
+                    return self._json({"ok": True})
+                return self._json({"ok": False}, 404)
 
             if route == "/api/open":
                 path = safe_path(q.get("path", [""])[0])
